@@ -1,24 +1,25 @@
 import azure.functions as func
 import datetime
 import json
+import logging
 import os
 import re
+import uuid
 import bcrypt
 from azure.cosmos import CosmosClient
 
 app = func.FunctionApp()
 
-COSMOS_CONN = os.environ["COSMOS_CONNECTION_STRING"]
-DB_NAME = os.environ.get("COSMOS_DATABASE_NAME", "soton_guessr")
-USERS_CONTAINER = os.environ.get("COSMOS_USERS_CONTAINER", "users")
-
 # Initialize Cosmos DB client
-_cosmos_client = CosmosClient.from_connection_string(COSMOS_CONN)
-_db = _cosmos_client.get_database_client(DB_NAME)
-_users = _db.get_container_client(USERS_CONTAINER)
+cosmos_connection_string = os.environ.get("COSMOS_CONNECTION_STRING")
+database_name = os.environ.get("COSMOS_DATABASE_NAME", "soton-guessr")
+users_container_name = os.environ.get("COSMOS_USERS_CONTAINER", "users")
 
-# Username: 3-26 chars, alphanumeric + underscore, must start with letter
-USERNAME_RE = re.compile(r"^[a-z][a-z0-9_]{2,25}$")
+cosmos_client = CosmosClient.from_connection_string(cosmos_connection_string)
+database = cosmos_client.get_database_client(database_name)
+users_container = database.get_container_client(users_container_name)
+
+
 
 # Constants
 MIN_PASSWORD_LENGTH = 8
@@ -35,68 +36,131 @@ def health(req: func.HttpRequest) -> func.HttpResponse:
     )
 
 
+@app.route(route="login", auth_level=func.AuthLevel.FUNCTION, methods=["POST"])
+def login(req: func.HttpRequest) -> func.HttpResponse:
+    try:
+        req_body = req.get_json()
+        username = req_body["username"].lower().strip()
+        password = req_body["password"]
+
+        # Query for user by username
+        query = f"SELECT * FROM c WHERE c.username = '{username}'"
+        users = list(users_container.query_items(
+            query=query,
+            enable_cross_partition_query=True
+        ))
+
+        # Check if user exists and password matches
+        if len(users) == 1:
+            user = users[0]
+            password_hash = user["passwordHash"]
+
+            # Verify password with bcrypt
+            if bcrypt.checkpw(password.encode("utf-8"), password_hash.encode("utf-8")):
+                response = {
+                    "result": True,
+                    "msg": "OK"
+                }
+                return func.HttpResponse(
+                    json.dumps(response),
+                    mimetype="application/json")
+
+        # Either user doesn't exist OR password is wrong
+        response = {
+            "result": False,
+            "msg": "Username or password incorrect"
+        }
+        return func.HttpResponse(
+            json.dumps(response),
+            mimetype="application/json")
+
+    except Exception as e:
+        logging.error(f"Error in login: {str(e)}")
+        response = {
+            "result": False,
+            "msg": f"Error: {str(e)}"
+        }
+        return func.HttpResponse(
+            json.dumps(response),
+            mimetype="application/json",
+            status_code=500)
+
+
 @app.route(route="register", auth_level=func.AuthLevel.FUNCTION, methods=["POST"])
 def register(req: func.HttpRequest) -> func.HttpResponse:
-    # Parse request body
     try:
-        body = req.get_json()
-    except ValueError:
-        return func.HttpResponse("Invalid JSON", status_code=400)
+        req_body = req.get_json()
+        username = req_body["username"].lower().strip()
+        password = req_body["password"]
 
-    username = (body.get("username") or "").lower().strip()
-    password = body.get("password") or ""
+        # Validate username length
+        if len(username) < 3 or len(username) > MAX_USERNAME_LENGTH:
+            response = {
+                "result": False,
+                "msg": f"Username must be between 3 and {MAX_USERNAME_LENGTH} characters"
+            }
+            return func.HttpResponse(
+                json.dumps(response),
+                mimetype="application/json")
 
-    # Validate username
-    if not username or len(username) > MAX_USERNAME_LENGTH:
+        # Validate password length
+        if len(password) < MIN_PASSWORD_LENGTH or len(password) > MAX_PASSWORD_LENGTH:
+            response = {
+                "result": False,
+                "msg": f"Password must be between {MIN_PASSWORD_LENGTH} and {MAX_PASSWORD_LENGTH} characters"
+            }
+            return func.HttpResponse(
+                json.dumps(response),
+                mimetype="application/json")
+
+        # Check if username already exists
+        query = f"SELECT * FROM c WHERE c.username = '{username}'"
+        existing_users = list(users_container.query_items(
+            query=query,
+            enable_cross_partition_query=True
+        ))
+
+        if len(existing_users) > 0:
+            response = {
+                "result": False,
+                "msg": "Username already exists"
+            }
+            return func.HttpResponse(
+                json.dumps(response),
+                mimetype="application/json")
+
+        # Hash password
+        password_hash = bcrypt.hashpw(
+            password.encode("utf-8"),
+            bcrypt.gensalt()
+        ).decode("utf-8")
+
+        # Create new user document with auto-generated ID
+        new_user = {
+            "id": str(uuid.uuid4()),
+            "username": username,
+            "passwordHash": password_hash,
+            "createdAt": datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
+        }
+
+        # Insert into Cosmos DB
+        users_container.create_item(body=new_user)
+
+        response = {
+            "result": True,
+            "msg": "OK"
+        }
         return func.HttpResponse(
-            f"Username must be 1-{MAX_USERNAME_LENGTH} characters",
-            status_code=400
-        )
+            json.dumps(response),
+            mimetype="application/json")
 
-    if not USERNAME_RE.match(username):
+    except Exception as e:
+        logging.error(f"Error in register: {str(e)}")
+        response = {
+            "result": False,
+            "msg": f"Error: {str(e)}"
+        }
         return func.HttpResponse(
-            "Username must start with a letter and contain only letters, numbers, and underscores",
-            status_code=400
-        )
-
-    # Validate password
-    if len(password) < MIN_PASSWORD_LENGTH:
-        return func.HttpResponse(
-            f"Password must be at least {MIN_PASSWORD_LENGTH} characters",
-            status_code=400
-        )
-
-    if len(password) > MAX_PASSWORD_LENGTH:
-        return func.HttpResponse(
-            f"Password must not exceed {MAX_PASSWORD_LENGTH} characters",
-            status_code=400
-        )
-
-    # Hash password
-    password_hash = bcrypt.hashpw(
-        password.encode("utf-8"),
-        bcrypt.gensalt()
-    ).decode("utf-8")
-
-    # Create user document
-    user_doc = {
-        "id": username,
-        "username": username,
-        "passwordHash": password_hash,
-        "createdAt": datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
-    }
-
-    # Save to database
-    try:
-        _users.create_item(body=user_doc)
-    except Exception:
-        return func.HttpResponse(
-            "Username already exists",
-            status_code=409
-        )
-
-    return func.HttpResponse(
-        json.dumps({"username": username}),
-        status_code=201,
-        mimetype="application/json"
-    )
+            json.dumps(response),
+            mimetype="application/json",
+            status_code=500)
