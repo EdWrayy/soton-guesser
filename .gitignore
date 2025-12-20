@@ -209,3 +209,5 @@ __marimo__/
 
 */.vscode/
 .vscode/
+
+local.settings.json
