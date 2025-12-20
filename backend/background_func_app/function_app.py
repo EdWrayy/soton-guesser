@@ -12,6 +12,8 @@ r = redis.StrictRedis(
     decode_responses=True
 )
 
+app = func.FunctionApp()
+
 def calculate_distance(lat1, lon1, lat2, lon2):
     """Haversine formula to calculate distance in km"""
     R = 6371
