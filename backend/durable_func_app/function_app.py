@@ -1,11 +1,25 @@
+import datetime
 import azure.functions as func
 import azure.durable_functions as df
 import json
 import logging
 from datetime import timedelta
+import os
+import redis
+from azure.cosmos import CosmosClient
 
 app = df.DFApp(http_auth_level=func.AuthLevel.ANONYMOUS)
 
+COSMOS_STR = os.getenv("CosmosDBConnectionString")
+REDIS_HOST = os.getenv("RedisHost")
+REDIS_KEY = os.getenv("RedisKey")
+BLOB_STR = os.getenv("AzureWebJobsStorage")
+
+cosmos_client = CosmosClient.from_connection_string(COSMOS_STR)
+db = cosmos_client.get_database_client("GeoGame")
+locations_col = db.get_container_client("Locations")
+results_col = db.get_container_client("Results")
+r = redis.StrictRedis(host=REDIS_HOST, port=6380, password=REDIS_KEY, ssl=True, decode_responses=True)
 
 # TRIGGER
 @app.route(route="start_game_trigger")
@@ -71,21 +85,64 @@ def prepare_round(params: dict):
     - Saves the 'answer' to Redis for score validation later
     """
     game_id = params['game_id']
+    round_num = params['round']
+
+    query = "SELECT * FROM c OFFSET @offset LIMIT 1"
+    location = list(locations_col.query_items(query, parameters=[{"name": "@offset", "value": random.randint(0, 10)}], enable_cross_partition_query=True))[0]
+
+
+    answer_key = f"game:{game_id}:round:{round_num}:answer"
+    r.set(answer_key, json.dumps(location['coordinates'])) 
+
+    from azure.storage.blob import BlobServiceClient, generate_blob_sas, BlobSasPermissions
+    blob_service_client = BlobServiceClient.from_connection_string(BLOB_STR)
+    blob_client = blob_service_client.get_blob_client(container="map-images", blob=location['image_name'])
+    sas_token = generate_blob_sas(
+        account_name=blob_service_client.account_name,
+        container_name="map-images",
+        blob_name=location['image_name'],
+        account_key=blob_service_client.credential.account_key,
+        permission=BlobSasPermissions(read=True),
+        expiry=datetime.utcnow() + timedelta(minutes=5)
+    )
+
     return {
-        "image_url": f"https://mystorage.blob.core.windows.net/maps/loc.jpg?token=...",
-        "location_id": "loc_123"
+        "image_url": f"{blob_client.url}?{sas_token}",
+        "round": round_num
     }
 
 @app.activity_trigger(input_name="gameId")
-def process_scores(gameId: str):
-    """
-    Logic for Step 9:
-    - Fetches all guesses collected by the /guess function (stored in Redis)
-    - Calculates scores
-    - Persists final round scores to Cosmos DB
-    """
-    return {"top_player": "Alice", "score": 1200}
+@app.activity_trigger(input_name="game_id")
+def process_scores(game_id: str):
+    guesses_key = f"match:{game_id}:round_guesses"
+    scores_key = f"match:{game_id}:scores"
 
+    all_guesses_raw = r.hgetall(guesses_key)
+    
+    round_results = []
+    
+    for player_id, json_data in all_guesses_raw.items():
+        guess_data = json.loads(json_data)
+        score = guess_data.get("score", 0)
+        
+        round_results.append({
+            "player_id": player_id,
+            "data": guess_data
+        })
+        
+        r.zincrby(scores_key, score, player_id)
+
+    game_result_doc = {
+        "id": f"{game_id}_{int(datetime.utcnow().timestamp())}",
+        "game_id": game_id,
+        "round_scores": round_results,
+        "timestamp": str(datetime.utcnow())
+    }
+    results_col.upsert_item(game_result_doc)
+
+    r.delete(guesses_key)
+
+    return round_results
 @app.activity_trigger(input_name="data")
 @app.generic_output_binding(arg_name="signalRMessages", type="signalR", hubName="test", connectionStringSetting="SignalRConnection")
 def signalr_broadcast(data: dict, signalRMessages: func.Out[str]):
