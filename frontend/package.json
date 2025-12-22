@@ -1,0 +1,23 @@
+{
+  "name": "sotonguesser",
+  "version": "1.0.0",
+  "description": "Soton Guesser",
+  "main": "app.js",
+  "engines": {
+    "node": "20.x"
+  },
+  "scripts": {
+    "start": "node app.js",
+    "gdeploy": "gcloud app deploy --version test",
+    "hdeploy": "git push heroku master"
+  },
+  "author": "Oli Bills",
+  "license": "ECS",
+  "dependencies": {
+    "ejs": "^3.1.10",
+    "express": "^4.21.2",
+    "request": "^2.88.2",
+    "requests": "^0.3.0",
+    "socket.io": "^4.8.1"
+  }
+}
