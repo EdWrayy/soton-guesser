@@ -7,7 +7,7 @@ const app = express();
 //set up sockets
 const server = require('http').Server(app);
 const io = require('socket.io')(server);
-const request = require('requrest');
+const request = require('request');
 
 
 //Setup static page handling
@@ -103,6 +103,17 @@ function startSession(socket, admin, adminPicture) {
     updateAll(lobbyCode);
 }
 
+function joinSession(socket, player, playerPicture, game) {
+    let player_state = {name : player, picture: playerPicture, current_score: 0}
+    players.set(player, player_state);
+    let otherPlayers = gameToPlayers.get(game);
+    gameToPlayers.set(game, otherPlayers.push(player));
+    playerToGame.set(player, game);
+
+    playersToSockets.set(player, socket);
+    socketsToPlayers.set(socket, player);
+}
+
 //Handle new connection
 io.on('connection', socket => { 
   	console.log('New connection');
@@ -110,7 +121,12 @@ io.on('connection', socket => {
     //Handle admin starting a new session
     socket.on('start', (username, picture) => {
         startSession(socket, username, picture);
-    })
+    });
+
+    //Handle player joining a game
+    socket.on('join', (username, picture, game) => {
+        joinSession(socket, username, picture, game);
+    });
 });
 
 //Start server
