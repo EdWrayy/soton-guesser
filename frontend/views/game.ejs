@@ -1,0 +1,7 @@
+<!doctype html>
+<html lang="en">
+    <div v-if="state.state.gameState == 0"><%- include('lobby'); -%></div>
+    <div v-if="state.state.gameState == 1"><%- include('guessing'); -%></div>
+    <div v-if="state.state.gameState == 2"><%- include('awnser'); -%></div>
+    <div v-if="state.state.gameState == 3"><%- include('scores'); -%></div>
+</html>

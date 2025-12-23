@@ -7,7 +7,7 @@ const app = express();
 //set up sockets
 const server = require('http').Server(app);
 const io = require('socket.io')(server);
-const request = require('requrest');
+const request = require('request');
 
 
 //Setup static page handling
