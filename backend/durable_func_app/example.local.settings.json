@@ -1,0 +1,11 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "FUNCTIONS_WORKER_RUNTIME": "python",
+    "CosmosDBConnectionString": "AccountEndpoint=https://db.documents.azure.com:443/;AccountKey=YOUR_COSMOS_KEY;",
+    "RedisHost": "cache.redis.cache.windows.net",
+    "RedisKey": "YOUR_REDIS_PRIMARY_KEY",
+    "SignalRConnection": "Endpoint=https://signalr.service.signalr.net;AccessKey=YOUR_SIGNALR_KEY;Version=1.0;"
+  }
+}
