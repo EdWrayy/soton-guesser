@@ -3,4 +3,11 @@
     <div v-if="state.isAdmin">
         <button class="btn btn-lg btn-primary" @click="advance">Next</button>
     </div>
+    <div v-if="guess != null">
+        <h1>{{guess}}</h1>
+    </div>
+    <div v-if="guess == null">
+        <h1>not yet guessed</h1>
+    </div>
+    <%- include('map'); -%>
 </html>

@@ -4,6 +4,14 @@ body {
     background-repeat: no-repeat;
     background-color: #acc5d0;
 }
+
+#map {
+  width: 300px !important;
+  height: 300px !important;
+  padding: 10px !important;
+  position: relative !important;
+}
+
 .title {
     font-weight: bold;
     font-size: 32px;
@@ -55,6 +63,8 @@ body {
   font-size: 30px;
   text-align: center;
 }
+
+/*
 #chat { 
     list-style-type: none; 
     margin: 0; 
@@ -68,4 +78,5 @@ body {
 #chat li:nth-child(odd) { 
     background-color: rgba(0,0,0,0.2); 
 }
+  */
 
