@@ -1,0 +1,10 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "FUNCTIONS_WORKER_RUNTIME": "python",
+    "ServiceBusConn": "Endpoint=sb://your-game-bus.servicebus.windows.net/;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=YOUR_KEY",
+    "RedisHost": "your-game-cache.redis.cache.windows.net",
+    "RedisKey": "YOUR_REDIS_PRIMARY_KEY"
+  }
+}
