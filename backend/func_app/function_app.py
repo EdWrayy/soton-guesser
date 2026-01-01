@@ -23,6 +23,8 @@ DB_NAME = os.environ.get("COSMOS_DATABASE_NAME", "soton-guessr")
 USERS = os.environ.get("COSMOS_USERS_CONTAINER", "users")
 SCORES = os.environ.get("COSMOS_SCORES_CONTAINER", "scores")
 LEADERBOARD = os.environ.get("COSMOS_LEADERBOARD_CONTAINER", "leaderboard")
+MATCHES = os.environ.get("COSMOS_MATCHES_CONTAINER", "matches")
+PLACES = os.environ.get("COSMOS_PLACES_CONTAINER", "places")
 LEASES = os.environ.get("COSMOS_LEASES_CONTAINER", "leases")
 
 client = CosmosClient.from_connection_string(COSMOS_CONNECTION_STRING)
@@ -31,6 +33,8 @@ db = client.get_database_client(DB_NAME)
 users_container = db.get_container_client(USERS)
 scores_container = db.get_container_client(SCORES)
 leaderboard_container = db.get_container_client(LEADERBOARD)
+matches_container = db.get_container_client(MATCHES)
+places_container = db.get_container_client(PLACES)
 
 
 # ---- Blob init ---- 
@@ -335,15 +339,11 @@ def get_place(req: func.HttpRequest) -> func.HttpResponse:
     #         "createdAt": _now_z(),
     # }
 
-    MyCosmos = CosmosClient.from_connection_string(os.environ['AzureCosmosDBConnectionString'])
-    CosmosDBProxy = MyCosmos.get_database_client(os.environ['DatabaseName'])
-    PlacesContainerProxy = CosmosDBProxy.get_container_client(os.environ['PlacesContainerName'])
-
     try:
         # maybe too inefficient -> could be changed later
         query = "SELECT * FROM matches ORDER BY RAND() OFFSET 0 LIMIT 1"
 
-        random_place = list(PlacesContainerProxy.query_items(query=query, enable_cross_partition_query=True))[0]
+        random_place = list(places_container.query_items(query=query, enable_cross_partition_query=True))[0]
         return _json({"result": True, "msg": "OK", "place": random_place}, 500)
     
     except Exception as e:
@@ -361,44 +361,38 @@ def create_lobby(req: func.HttpRequest) -> func.HttpResponse:
     # {userId: "id"}
 
     # Adds to matches container:
-    # {matchId: "uuid", matchCode: "012345"
+    # {matchCode: "unique 6 digit code",
     # players: [{userId: "uuid"}] matchSettings:{noOfRounds:int, maxPlayers:int, countdown:int}"}
 
-    MyCosmos = CosmosClient.from_connection_string(os.environ['AzureCosmosDBConnectionString'])
-    CosmosDBProxy = MyCosmos.get_database_client(os.environ['DatabaseName'])
-    MatchesContainerProxy = CosmosDBProxy.get_container_client(os.environ['MatchesContainerName'])
     try:
         body = req.get_json()
         host_id = body['userId']
 
         # maybe check if user exists?
 
-        # generate unique match ID
-        match_id = str(uuid.uuid4())
-
         # generate 6 character match code
-        code = random.randint(0, 999999)
-        code = f"{code:06d}"
+        match_id = random.randint(0, 999999)
+        match_id = f"{match_id:06d}"
 
         # check if a code already exists within the matches container
-        query = "SELECT m.matchCode FROM matches"
+        query = "SELECT m.matchId FROM matches"
 
-        codes = list(MatchesContainerProxy.query_items(query=query, enable_cross_partition_query=True))
+        codes = list(matches_container.query_items(query=query, enable_cross_partition_query=True))
 
-        while code in codes:
-            code = random.randint(0, 999999)
-            code = f"{code:06d}"
+        while match_id in codes:
+            match_id = random.randint(0, 999999)
+            match_id = f"{match_id:06d}"
 
         # get SignalR access token
         signalR_token = "placeholder"
 
         # add match to matches container
         default_match_settings = {"noOfRounds":8, "maxPlayers":8, "countdown":60}
-        doc = {"matchId": match_id, "matchCode": code, "players": [{"userId": host_id}], "matchSettings": default_match_settings}
-        MatchesContainerProxy.create_item(doc)
+        doc = {"matchId": match_id, "players": [{"userId": host_id}], "matchSettings": default_match_settings}
+        matches_container.create_item(doc)
 
         # return response
-        return _json({"result": True, "msg": "OK", "matchId": match_id, "matchCode": code, "signalRToken": signalR_token}, 201)
+        return _json({"result": True, "msg": "OK", "matchCode": match_id, "signalRToken": signalR_token, "matchSettings": default_match_settings}, 201)
     
     except Exception as e:
         logging.exception("Error in create_place")
@@ -410,24 +404,20 @@ def create_lobby(req: func.HttpRequest) -> func.HttpResponse:
 @app.route(route="join_game", auth_level=func.AuthLevel.FUNCTION, methods=["POST"])
 def join_game(req: func.HttpRequest) -> func.HttpResponse:
     # Expects:
-    # {matchId: str, playerId: str}
+    # {matchCode: str, playerId: str}
 
     # Adds the player to the lobby:
-    # {matchId: "uuid", matchCode: "012345"
+    # {matchId: unique 6 digit code
     # host: "hostId, players: [{userId: "uuid"}] matchSettings:{noOfRounds:int, maxPlayers:int, countdown:int}"}
-
-    MyCosmos = CosmosClient.from_connection_string(os.environ['AzureCosmosDBConnectionString'])
-    CosmosDBProxy = MyCosmos.get_database_client(os.environ['DatabaseName'])
-    MatchesContainerProxy = CosmosDBProxy.get_container_client(os.environ['MatchesContainerName'])
 
     try:
         body = req.get_json()
-        match_id = body['matchId']
+        match_id = body['matchCode']
         player_id = body['playerId']
 
         # fetch current lobby state
         query = f"SELECT * FROM matches m WHERE m.matchId = {match_id}"
-        item = list(MatchesContainerProxy.query_items(query=query, enable_cross_partition_query=True))[0]
+        item = list(matches_container.query_items(query=query, enable_cross_partition_query=True))[0]
 
         max_players = item["matchSettings"]["maxPlayers"]
         players = item["players"]
@@ -445,12 +435,12 @@ def join_game(req: func.HttpRequest) -> func.HttpResponse:
         else:
             # replace entry
             item["players"].append({"userId": player_id})
-            MatchesContainerProxy.upsert_item(item)
+            matches_container.upsert_item(item)
             # return response
             return _json({"result": True, "msg": "OK", "signalRToken": signalR_token}, 201)
 
     except Exception as e:
-        logging.exception("Error in create_place")
+        logging.exception("Error in join_game")
         return _json({"result": False, "msg": str(e)}, 500)
 
 # Quit game
@@ -458,20 +448,17 @@ def join_game(req: func.HttpRequest) -> func.HttpResponse:
 @app.route(route="quit_game", auth_level=func.AuthLevel.FUNCTION, methods=["POST"])
 def quit_game(req: func.HttpRequest) -> func.HttpResponse:
     # Expects:
-    # {matchId: str, playerId: str}
+    # {matchCode: str, playerId: str}
 
-    MyCosmos = CosmosClient.from_connection_string(os.environ['AzureCosmosDBConnectionString'])
-    CosmosDBProxy = MyCosmos.get_database_client(os.environ['DatabaseName'])
-    MatchesContainerProxy = CosmosDBProxy.get_container_client(os.environ['MatchesContainerName'])
 
     try:
         body = req.get_json()
-        match_id = body['matchId']
+        match_id = body['matchCode']
         player_id = body['playerId']
 
         # fetch current lobby state
         query = f"SELECT * FROM matches m WHERE m.matchId = {match_id}"
-        item = list(MatchesContainerProxy.query_items(query=query, enable_cross_partition_query=True))[0]
+        item = list(matches_container.query_items(query=query, enable_cross_partition_query=True))[0]
 
         players = item["players"]
 
@@ -482,17 +469,17 @@ def quit_game(req: func.HttpRequest) -> func.HttpResponse:
             return _json({"result": False, "msg": "Player isn't in lobby"}, 201)
         elif (lobby_empty):
             # delete entry
-            MatchesContainerProxy.delete_item(item)
+            matches_container.delete_item(item)
             return _json({"result": True, "msg": "Lobby closed"}, 201)
         else:
             # replace entry
             item["players"] = [player for player in players if player["userId"] != player_id]
-            MatchesContainerProxy.upsert_item(item)
+            matches_container.upsert_item(item)
 
             return _json({"result": True, "msg": "OK"}, 201)
 
     except Exception as e:
-        logging.exception("Error in create_place")
+        logging.exception("Error in quit_game")
         return _json({"result": False, "msg": str(e)}, 500)
 
 
@@ -501,44 +488,38 @@ def quit_game(req: func.HttpRequest) -> func.HttpResponse:
 # Takes new settings and changes it in the database
 @app.settings(route="change_settings", auth_level=func.AuthLevel.FUNCTION, methods=["PUT"])
 def settings(req: func.HttpRequest) -> func.HttpResponse:
-    # expects: {matchId: "id", matchSettings:{noOfRounds:int, maxPlayers:int, countdown:int}}
-    MyCosmos = CosmosClient.from_connection_string(os.environ['AzureCosmosDBConnectionString'])
-    CosmosDBProxy = MyCosmos.get_database_client(os.environ['DatabaseName'])
-    MatchesContainerProxy = CosmosDBProxy.get_container_client(os.environ['MatchesContainerName'])
+    # expects: {matchCode: code, matchSettings:{noOfRounds:int, maxPlayers:int, countdown:int}}
+    
     try:
         body = req.get_json()
-        match_id = body['matchId']
+        match_id = body['matchCode']
         match_settings = body["matchSettings"]
 
         # fetch current lobby state
         query = f"SELECT * FROM matches m WHERE m.matchId = {match_id}"
-        item = list(MatchesContainerProxy.query_items(query=query, enable_cross_partition_query=True))[0]
+        item = list(matches_container.query_items(query=query, enable_cross_partition_query=True))[0]
 
         
         # update entry
         item["matchSettings"] = match_settings
-        MatchesContainerProxy.upsert_item(item)
+        matches_container.upsert_item(item)
 
         return _json({"result": True, "msg": "OK"}, 201)
 
     except Exception as e:
-        logging.exception("Error in create_place")
+        logging.exception("Error in change_settings")
         return _json({"result": False, "msg": str(e)}, 500)
 
 # Guess
 # Add guess to redis DB and service bus queue
 @app.route(route="guess", auth_level=func.AuthLevel.FUNCTION, methods=["POST"])
 def guess(req: func.HttpRequest) -> func.HttpResponse:
-    # expects: {matchId: "id", playerId: "id", actual: {lat:lat, lon:lon}, guess:{lat:lat, lon:lon}}
+    # expects: {matchCode: code, playerId: "id", actual: {lat:lat, lon:lon}, guess:{lat:lat, lon:lon}}
 
-    MyCosmos = CosmosClient.from_connection_string(os.environ['AzureCosmosDBConnectionString'])
-    CosmosDBProxy = MyCosmos.get_database_client(os.environ['DatabaseName'])
-    MatchesContainerProxy = CosmosDBProxy.get_container_client(os.environ['MatchesContainerName'])
-    PlacesContainerProxy = CosmosDBProxy.get_container_client(os.environ['PlacesContainerName'])
     
     try:
         body = req.get_json()
-        match_id = body['matchId']
+        match_id = body['matchCode']
         player_id = body["playerId"]
         actual = ["actual"]
         player_guess = ["guess"]
