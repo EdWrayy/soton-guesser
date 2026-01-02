@@ -63,6 +63,13 @@ def _get_user_by_username(username: str) -> Optional[Dict[str, Any]]:
     results = list(users_container.query_items(query=query, parameters=params, enable_cross_partition_query=True))
     return results[0] if results else None
 
+def _get_user_by_user_id(user_id: str) -> Optional[Dict[str, Any]]:
+    # Parameterised query to avoid injection
+    query = "SELECT TOP 1 * FROM c WHERE c.userId = @u"
+    params = [{"userId": "@u", "value": user_id}]
+    results = list(users_container.query_items(query=query, parameters=params, enable_cross_partition_query=True))
+    return results[0] if results else None
+
 def _inc_score(user_id: str, scope: str, display_name: str, delta: int) -> None:
     now = _now_z()
     try:
@@ -196,10 +203,6 @@ def leaderboard(req: func.HttpRequest) -> func.HttpResponse:
     except Exception as e:
         logging.exception("leaderboard failed")
         return _json({"result": False, "msg": str(e)}, 500)
-
-
-# To be changed -> server calls results when match ends. A single API call when game ends makes more sense than updating 
-# each score and leaderboard placement individually with multiple calls.
 
 # Updates leaderboard automatically when score updates are made
 @app.function_name(name="scores_to_leaderboard")
@@ -524,18 +527,57 @@ def guess(req: func.HttpRequest) -> func.HttpResponse:
         actual = ["actual"]
         player_guess = ["guess"]
 
+        return _json({"result": True, "msg": "OK"}, 201)
+
     # Add to Redis
 
     # Add to service bus queue
 
-    except:
-        return
+    except Exception as e:
+        logging.exception("Error in guess")
+        return _json({"result": False, "msg": str(e)}, 500)
     
 
 # Get game results
 # Write results to SQL
 # End game
-# Clears DBs and updates player data and leaderboard
-@app.route(route="results", auth_level=func.AuthLevel.FUNCTION, methods=["POST"])
+# Clears DBs and updates player data
+@app.route(route="results", auth_level=func.AuthLevel.FUNCTION, methods=["PUT"])
 def results(req: func.HttpRequest) -> func.HttpResponse:
-    return
+    # Expects: {matchCode: 6 digit code, players:[{playerId: id, score:score}]}
+    try:
+        body = req.get_json()
+        match_id = body['matchCode']
+        players = body["players"]
+
+        # Remove entry from matches container
+        query = f"SELECT * FROM matches m WHERE m.matchId = {match_id}"
+        item = list(matches_container.query_items(query=query, enable_cross_partition_query=True))[0]
+
+        matches_container.delete_item(item=item, partition_key=item["partitionKey"])
+
+        # Add scores to users
+        for player in players:
+
+            # get user
+            id = player["playerId"]
+            user = _get_user_by_user_id(id)
+
+            if (not user):
+                continue
+            else: 
+                # Update players score data
+                display_name = user["displayName"]
+                delta = player["score"]
+                if (delta > 0):
+                    _inc_score(id, "alltime", display_name, delta)
+                    _inc_score(id, _month_scope(), display_name, delta)
+
+
+
+        return _json({"result": True, "msg": "OK"}, 201)
+
+    except Exception as e:
+        logging.exception("Error in results")
+        return _json({"result": False, "msg": str(e)}, 500)
+
