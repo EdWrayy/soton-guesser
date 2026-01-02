@@ -40,6 +40,12 @@ let adminToGame = new Map();
 let gameToPlayers = new Map();
 //Map of players to games
 let playerToGame = new Map();
+//Map of players to player states
+//  0     - login
+//  1     - main menu
+//  2     - in game
+//  3     - uploading image
+let playerToState = new Map();
 //State of the games can be either
 //  0     - waiting for players
 //  1     - guessing (display image, wait until timer runs out while clients send guesses to redis)
@@ -66,6 +72,14 @@ function startServer() {
     });
 }
 
+//Advance game state
+function advance(game) {
+    let state = gameToState.get(game);
+    if (state == 0){
+        gameToState.set(game, 1);
+    }
+}
+
 //Update all clients
 function updateAll(game){
     for (let [player] of gameToPlayers.get(game)){
@@ -75,12 +89,17 @@ function updateAll(game){
 //Update one client
 function updateClient(player){
     const socket = playersToSockets.get(player);
+    const data = getState(player);
+    socket.emit('update', data);
+}
+//Get the game state
+function getState(player){
     const playerState = registeredPlayers.get(player);
     const game = playerToGame.get(player);
     const gameState = gameToState.get(game);
-    const data = {state: gameState, me: playerState, players: gameToPlayers.get(game)}
-
-    socket.emit('update', data);
+    const isAdmin = admins.includes(player);
+    const playerMode = playerToState.get(player);
+    return {state: {currentClientMode: playerMode, gameState: gameState}, isAdmin: isAdmin, player: playerState, otherPlayers: gameToPlayers.get(game)}
 }
 
 
@@ -88,7 +107,7 @@ function updateClient(player){
 //Gets lobby code from api function
 //Adds a new game at state 0
 //Adds the admin (given as parameter)
-function startSession(socket, admin, apiResponse) {
+function startSession(admin, apiResponse) {
     let lobbyCode = apiResponse['matchCode'];
     let token = apiResponse['signalRToken'];
     let matchSettings = apiResponse['matchSettings'];
@@ -125,11 +144,13 @@ function joinSession(player, game, apiResponse) {
 }
 
 function register(socket, username, password){
-    let player_state = {name: username, password: password, current_score: 0};
+    let player_state = {name: username, currentScore: 0, guess: null};
     registeredPlayers.set(player, player_state);
 
     playersToSockets.set(username, socket);
     socketsToPlayers.set(socket, username);
+
+    playerToState.set(username, 0);
 }
 
 function login(socket, username, password){
@@ -138,6 +159,8 @@ function login(socket, username, password){
     }
     else{
         loggedinPlayers.push(username);
+        playerToState.set(username, 1);
+        socket.emit('menu', getState(username));
     }
 }
 
@@ -157,7 +180,7 @@ function createLobbyAPI(socket, username){
     }, function(err, response, body){
         console.log(body)
         if (body['result']){
-            startSession(socket, username, body);
+            startSession(username, body);
         }
         else{
             error(socket, body['msg']);
