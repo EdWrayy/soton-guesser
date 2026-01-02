@@ -131,7 +131,7 @@ var app = new Vue({
         setTimeout(updateLeaderboard(),1000);
        },
        startLobby(state, code) {
-        this.update(state, code);
+        this.update(state);
         console.log(this.state.otherPlayers);
         this.leaderboard = this.state.otherPlayers;
         this.leaderboard.unshift(this.state.player);
