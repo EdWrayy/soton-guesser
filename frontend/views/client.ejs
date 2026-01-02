@@ -11,6 +11,7 @@
             <div v-if="state.state.currentClientMode == 0"><%- include('login'); -%></div>
             <div v-if="state.state.currentClientMode == 1"><%- include('menu'); -%></div>
             <div v-if="state.state.currentClientMode == 2"><%- include('game'); -%></div>
+            <div v-if="state.state.currentClientMode == 3"><%- include('upload'); -%></div>
         </div>
         <div v-else>
             <p>Connecting...</p>

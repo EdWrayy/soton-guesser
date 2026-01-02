@@ -1,13 +1,15 @@
 <!doctype html>
 <html lang="en">
-    <div v-if="state.isAdmin">
+    <h1>{{timerText}}</h1>
+    <div v-if="state.isAdmin && guessTime == 0">
         <button class="btn btn-lg btn-primary" @click="advance">Next</button>
     </div>
-    <div v-if="guess != null">
-        <h1>{{guess}}</h1>
+    <div v-if="!awnsered">
+        <button class="btn btn-lg btn-primary" @click="awnser">Sumbit awnser</button>
     </div>
-    <div v-if="guess == null">
-        <h1>not yet guessed</h1>
+    <div v-if="location != null">
+        <p>{{location.name}}</p>
+        <img src="" id="guessImage">
     </div>
     <%- include('map'); -%>
 </html>
