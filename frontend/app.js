@@ -64,6 +64,17 @@ let playersToSockets = new Map();
 //Map of sockets to usernames
 let socketsToPlayers = new Map();
 
+//Map of game lobby code to instance of orchestrator and management urls
+//Id: The instance ID of the orchestration (should be the same as the InstanceId input).
+//StatusQueryGetUri: The status URL of the orchestration instance.
+//SendEventPostUri: The "raise event" URL of the orchestration instance.
+//TerminatePostUri: The "terminate" URL of the orchestration instance.
+//PurgeHistoryDeleteUri: The "purge history" URL of the orchestration instance.
+//suspendPostUri: The "suspend" URL of the orchestration instance.
+//resumePostUri: The "resume" URL of the orchestration instance.
+let gameToOrchestrator = new Map();
+
+
 //Start the server
 function startServer() {
     const PORT = process.env.PORT || 8080;
@@ -99,7 +110,9 @@ function getState(player){
     const gameState = gameToState.get(game);
     const isAdmin = admins.includes(player);
     const playerMode = playerToState.get(player);
-    return {state: {currentClientMode: playerMode, gameState: gameState}, isAdmin: isAdmin, player: playerState, otherPlayers: gameToPlayers.get(game)}
+    const playerIndex = gameToPlayers.get(game).indexOf(player);
+    const otherPlayers = gameToPlayers.get(game).splice(playerIndex, 1)
+    return {state: {currentClientMode: playerMode, gameState: gameState}, isAdmin: isAdmin, player: playerState, otherPlayers: otherPlayers}
 }
 
 
@@ -128,6 +141,10 @@ function startSession(admin, apiResponse) {
     playerToSignalR.set(admin, token);
     gameToSettings.set(lobbyCode, matchSettings);
 
+    playerToState.set(admin, 2);
+    let adminSocket = playersToSockets.get(admin);
+    adminSocket.emit('lobby', getState(admin), lobbyCode)
+
     updateAll(lobbyCode);
 }
 
@@ -141,6 +158,12 @@ function joinSession(player, game, apiResponse) {
     playerToGame.set(player, game);
 
     playerToSignalR.set(player, token);
+
+    playerToState.set(player, 2);
+    let playerSocket = playersToSockets.get(player);
+    playerSocket.emit('lobby', getState(player), game);
+
+    updateAll(game);
 }
 
 function register(socket, username, password){
@@ -163,6 +186,30 @@ function login(socket, username, password){
         socket.emit('menu', getState(username));
     }
 }
+
+function returnToMenu(socket){
+    let player = socketsToPlayers.get(socket);
+    if (playerToGame.has(player)){
+        let game = playerToGame.get(player);
+
+        let playersList = gameToPlayers.get(game);
+        let playerIndex = playersList.indexOf(player);
+        gameToPlayers.set(game, playersList.splice(playerIndex, 1));
+        playerToGame.delete(player);
+        playerToSignalR.delete(player);
+
+        if (admins.includes(player)){
+            admins.splice(admins.indexOf(player), 1);
+            adminToGame.delete(player);
+            gameToAdmin.delete(game);
+            //Most likely would need functionality to end the game since there is no admin or re-assign a new admin
+        }
+    }
+    playerToState.set(player, 1);
+    updateAll(game);
+}
+
+
 
 
 function error(socket, message, halt){
@@ -230,6 +277,31 @@ function loginPlayerAPI(socket, username, password){
     })
 }
 
+function uploadImageAPI(socket, data){
+    request.post(BACKEND_ENDPOINT + '/create_place', {
+        json: true,
+        body: data
+    }, function(err, response, body){
+        if(body['result']){
+            console.log("Image successfully uploaded at: " + body['url']);
+        }
+        else{
+            error(socket, body['msg'], false);
+        }
+    })
+}
+
+function updateLeaderboardAPI(socket, timeframe){
+    let response = request.get(BACKEND_ENDPOINT + '/leaderboard', params={'scope' : timeframe, 'limit' : 10});
+    let response_json = response.json();
+    if (response_json['result']){
+        socket.emit('leaderboard', response_json['items']);
+    }
+    else{
+        error(socket, "Something went impossibly wrong", false);
+    }
+}
+
 //Handle new connection
 io.on('connection', socket => { 
   	console.log('New connection');
@@ -252,6 +324,28 @@ io.on('connection', socket => {
     //Handle player logging in
     socket.on('login', (username, password) => {
         loginPlayerAPI(socket, username, password);
+    });
+
+    //Handle player returning to menu
+    socket.on('menu', ()=> {
+        returnToMenu(socket);
+    });
+
+    //Handle player entering image upload state
+    socket.on('toUpload', () => {
+        let player = socketsToPlayers.get(socket);
+        playerToState.set(player, 3);
+        socket.emit('upload', getState(player));
+    });
+
+    //Handle client uploading image
+    socket.on('upload', (data) => {
+        uploadImageAPI(socket, data);
+    })
+
+    //Handle leaderboard request
+    socket.on('leaderboard', (timeframe) => {
+        updateLeaderboardAPI(socket, timeframe);
     })
 });
 
