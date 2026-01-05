@@ -65,6 +65,10 @@ def game_orchestrator(context: df.DurableOrchestrationContext):
             "target": "updateLeaderboard",
             "arguments": [round_results]
         })
+        
+        # Short pause between rounds
+        inter_round_timeout = context.current_utc_datetime + timedelta(seconds=30)
+        yield context.create_timer(inter_round_timeout)
 
     yield context.call_activity("signalr_broadcast", {
         "game_id": game_id,
