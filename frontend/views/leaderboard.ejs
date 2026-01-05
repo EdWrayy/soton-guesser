@@ -1,9 +1,15 @@
 <!doctype html>
 <html lang="en">
     <div v-if="leaderboard != null">
-        <div class="leaderboard" v-for="entry in leaderboard">
-            <div>{{entry.name}}</div>
-            <div>{{entry.currentScore}}</div>
+        <div class="leaderboardHeading">
+            <div>Username</div>
+            <div>Score</div>
+        </div>
+        <div class="leaderboardEntry">
+            <div class="leaderboard" v-for="entry in leaderboard">
+                <div>{{entry.name}}</div>
+                <div>{{entry.currentScore}}</div>
+            </div>
         </div>
     </div>
     <div v-else><p>Loading leaderboard...</p></div>

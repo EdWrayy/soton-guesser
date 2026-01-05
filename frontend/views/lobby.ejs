@@ -1,12 +1,12 @@
 <!doctype html>
 <html lang="en">
-    <h2 class="code">{{code}}</h2>
+    <h2 class="code">Lobby Code: {{code}}</h2>
     <div v-if="state.isAdmin">
         <button class="btn btn-lg btn-primary" @click="advance">StartGame</button>
     </div>
     <div class="lobby"> 
         <div v-for="entry in leaderboard">
-            <div>{{entry.name}}</div>
+            <div class="entry">{{entry.name}}</div>
         </div>
     </div>
 </html>

@@ -8,8 +8,10 @@
         <button class="btn btn-lg btn-primary" @click="awnser">Sumbit awnser</button>
     </div>
     <div v-if="location != null">
-        <p>{{location.name}}</p>
-        <img src="" id="guessImage">
+            <h3>{{location.name}}</h3>
     </div>
-    <%- include('map'); -%>
+    <div class="guessing">
+        <img src="" id="guessImage">
+        <%- include('map'); -%>
+    </div>
 </html>

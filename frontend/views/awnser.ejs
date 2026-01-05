@@ -5,10 +5,14 @@
     </div>
     <h2>Results</h2>
     <div v-if="location != null">
-        <p>{{location.name}}</p>
-        <img src="" id="guessImage">
+            <h3>{{location.name}}</h3>
     </div>
-    <%- include('map'); -%>
-    <%- include('leaderboard'); -%>
+    <div class="awnsers">
+        <div class="guessing">
+            <img src="" id="guessImage">
+            <%- include('map'); -%>
+        </div>
+        <%- include('leaderboard'); -%>
+    </div>
     
 </html>

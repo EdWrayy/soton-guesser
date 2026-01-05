@@ -145,11 +145,11 @@ var app = new Vue({
         resetMap();
         startTimer(time);
        },
-       startAwnsers(state, location, playerScores) {
+       startAwnsers(state, playerScores) {
         this.update(state);
-        this.location = location;
         this.leaderboard = playerScores;
         this.orderLeaderboard();
+        this.setBuildingImage();
         resetMap();
        },
        startScores(state) {
@@ -198,7 +198,7 @@ function connect() {
         //players
         //app.startLobby({state: {currentClientMode: 2, gameState: 0}, isAdmin: true, player: {name: "me", currentScore: 0, guess: null}, otherPlayers: [{name: "1", currentScore: 0, guess: null},{name: "2", currentScore: 0, guess: null},{name: "3", currentScore: 0, guess: null},{name: "4", currentScore: 0, guess: null}]}, 1234);
         //app.startGuessing({state: {currentClientMode: 2, gameState: 1}, isAdmin: true, player: {name: "me", currentScore: 0, guess: null}, otherPlayers: [{name: "1", currentScore: 0, guess: null},{name: "2", currentScore: 0, guess: null},{name: "3", currentScore: 0, guess: null},{name: "4", currentScore: 0, guess: null}]},{name: "test location", imageBase64:testImg},120);
-        app.startAwnsers({state: {currentClientMode: 2, gameState: 2}, isAdmin: true, player: {name: "me", currentScore: 15, guess: {lat: 50.932, lon: -1.391}}, otherPlayers: [{name: "1", currentScore: 3, guess: {lat: 50.942, lon: -1.381}},{name: "2", currentScore: 10, guess: {lat: 50.92, lon: -1.375}},{name: "3", currentScore: 5, guess: {lat: 50.832, lon: -1.391}},{name: "4", currentScore: 0, guess: {lat: 50.932, lon: -1.4}}]},{name: "test location",lat: 50.93, lon: -1.39, imageBase64:testImg}, [{name: "me", currentScore: 0},{name: "1", currentScore: 1},{name: "2", currentScore: 3},{name: "3", currentScore: 5},{name: "4", currentScore: 0}]);
+        //app.startAwnsers({state: {currentClientMode: 2, gameState: 2}, isAdmin: true, player: {name: "me", currentScore: 15, guess: {lat: 50.932, lon: -1.391}}, otherPlayers: [{name: "1", currentScore: 3, guess: {lat: 50.942, lon: -1.381}},{name: "2", currentScore: 10, guess: {lat: 50.92, lon: -1.375}},{name: "3", currentScore: 5, guess: {lat: 50.832, lon: -1.391}},{name: "4", currentScore: 0, guess: {lat: 50.932, lon: -1.4}}]}, [{name: "me", currentScore: 0},{name: "1", currentScore: 1},{name: "2", currentScore: 3},{name: "3", currentScore: 5},{name: "4", currentScore: 0}]);
         //app.startScores({state: {currentClientMode: 2, gameState: 3}, isAdmin: true, player: {name: "me", currentScore: 15, guess: null}, otherPlayers: [{name: "1", currentScore: 3, guess: null},{name: "2", currentScore: 10, guess: null},{name: "3", currentScore: 5, guess: null},{name: "4", currentScore: 0, guess: null}]});
         //app.startUpload({state: {currentClientMode: 3, gameState: 0}, isAdmin: true, player: {name: "me", currentScore: 0, guess: null}, otherPlayers: []});
     });
@@ -226,8 +226,8 @@ function connect() {
         app.startGuessing(state,location,time);
     });
 
-    socket.on('awnsers', function(state,location, playerScores) {
-        app.startAwnsers(state, location, playerScores)
+    socket.on('awnsers', function(state, playerScores) {
+        app.startAwnsers(state, playerScores)
     });
 
     socket.on('scores', function(state) {
@@ -301,18 +301,30 @@ function initMap() {
         
         for (const player of app.state.otherPlayers) {
             if (player.guess != null) {
-                new google.maps.marker.AdvancedMarkerElement({
+                const otherPinStyle = new google.maps.marker.PinElement({
+                    background: '#006ab0ff',
+                    borderColor: '#004e82ff',
+                    glyphColor: '#004e82ff'
+                });
+                let otherGuesses = new google.maps.marker.AdvancedMarkerElement({
                     map,
                     position: {lat: player.guess.lat, lng: player.guess.lon},
                 });
+                otherGuesses.append(otherPinStyle)
             }
         }
 
         if (app.location != null && app.state.state.gameState == 2) {
-            new google.maps.marker.AdvancedMarkerElement({
+            const pinBackground = new google.maps.marker.PinElement({
+                background: '#FBBC04',
+                borderColor: '#a57c00ff',
+                glyphColor: '#a57c00ff'
+            });
+            let correctLocation = new google.maps.marker.AdvancedMarkerElement({
                     map,
                     position: {lat: app.location.lat, lng: app.location.lon},
                 });
+            correctLocation.append(pinBackground);
         }
 
         if (app.state.state.gameState == 1) {
