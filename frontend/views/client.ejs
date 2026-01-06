@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+
+    <%- include('header'); -%>
+
+    <h2 class="title">Soton Guesser</h2>
+
+    <div id="game">
+        <p class = "error">{{errorMessage}}</p>
+        <div v-if="connected">
+            <div v-if="state.state.currentClientMode == 0"><%- include('login'); -%></div>
+            <div v-if="state.state.currentClientMode == 1"><%- include('menu'); -%></div>
+            <div v-if="state.state.currentClientMode == 2"><%- include('game'); -%></div>
+            <div v-if="state.state.currentClientMode == 3"><%- include('upload'); -%></div>
+        </div>
+        <div v-else>
+            <p>Connecting...</p>
+        </div>
+    </div>
+
+    <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyAI981wYXIAOVe5QMB0af7m-0dW_KQUALk&loading=async&callback=initMap&libraries=marker" defer></script>
+
+    <%- include('footer'); -%>
+
+</html>

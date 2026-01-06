@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en">
+    <input type="text" v-model="username" class="form-control" placeholder="Username">
+    <input type="text" v-model="password" class="form-control" placeholder="Password">
+    <div v-if="registering">
+        <input type="text" v-model="confirmPassword" class="form-control" placeholder="Confirm Password">
+        <button class="btn btn-lg btn-primary" @click="register">Register</button>
+        <p>Already got an account?</p>
+        <button class="btn btn-lg btn-primary" @click="stopRegister">Login here!</button>
+    </div>
+    <div v-if="!registering">
+        <button class="btn btn-lg btn-primary" @click="login">Login</button>
+        <p>Not got an account?</p>
+        <button class="btn btn-lg btn-primary" @click="startRegister">Register here!</button>
+    </div>
+</html>

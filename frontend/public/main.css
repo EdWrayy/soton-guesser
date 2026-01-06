@@ -1,0 +1,132 @@
+body {
+    background-image: url('/static/background1.jpg');
+    background-size: cover;
+    background-repeat: no-repeat;
+    background-color: #acc5d0;
+}
+
+#map {
+  width: 300px !important;
+  height: 300px !important;
+  padding: 10px !important;
+  position: relative !important;
+}
+
+#guessImage {
+  max-height: 300px;
+  max-width: 300px;
+  min-height: 50px;
+  min-height: 50px;
+  padding: 10px !important;
+  position: relative !important;
+}
+
+.title {
+    font-weight: bold;
+    font-size: 32px;
+    text-align: center;
+}
+.error {
+    font-weight: normal;
+    font-size: 10px;
+    text-align: left;
+    color: red;
+}
+.code {
+    font-weight: bold;
+    font-size: 50px;
+    text-align: left;
+}
+.container {
+    padding-bottom: 10px;
+    padding-top: 10px;
+    height: 100vh;
+}
+.leaderboard {
+  display: grid;
+  width: 500px;
+  grid-template-columns: 50% 50%;
+  background-color: rgb(0, 0, 0);
+  padding: 0px;
+  background-color: #f1f1f1;
+}
+
+.leaderboard div {
+  border: 1px solid black;
+  padding: 0px;
+  font-size: 30px;
+  text-align: center;
+}
+
+.leaderboardEntry> :nth-child(1){
+  background-color: gold;
+}
+
+
+.leaderboardEntry> :nth-child(2){
+  background-color: silver
+}
+
+.leaderboardEntry> :nth-child(3){
+  background-color: rgb(189, 104, 0)
+}
+
+
+.leaderboardHeading {
+  display: grid;
+  width: 500px;
+  grid-template-columns: 50% 50%;
+  background-color: rgb(0, 0, 0);
+  padding: 0px;
+}
+.leaderboardHeading div {
+  background-color: #2189ca;
+  border: 1px solid black;
+  padding: 0px;
+  font-size: 30px;
+  font-weight: bold;
+  text-align: center;
+}
+.lobby {
+  display: grid;
+  grid-template-columns: 23% 23% 23% 23%;
+  background-color: rgb(157, 204, 229);
+  padding: 10px;
+  column-gap: 2%;
+  row-gap: 10px;
+  border-radius: 20px;
+  border-color: black;
+  border-style: solid;
+}
+.entry {
+  background-color: #f1f1f1;
+  border: 1px solid black;
+  border-style: solid;
+  border-radius: 20px;
+  padding: 5px;
+  font-size: 30px;
+  text-align: center;
+}
+
+.guessing {
+  display: grid;
+  width: 700px;
+  height: 320px;
+  grid-template-columns: 300px 300px;
+  background-color: rgb(157, 204, 229);
+  padding: 10px;
+  column-gap: 10px;
+  row-gap: 10px;
+  border-radius: 20px;
+  border-color: black;
+  border-style: solid;
+}
+
+.awnsers {
+  display: grid;
+  grid-template-columns: 700px 700px;
+  padding: 10px;
+  column-gap: 10px;
+  row-gap: 10px;
+  border-style: none;
+}
