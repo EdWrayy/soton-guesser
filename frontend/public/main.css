@@ -5,6 +5,10 @@ body {
     background-color: #acc5d0;
 }
 
+.form-control {
+  z-index: 1000;
+}
+
 #map {
   width: 300px !important;
   height: 300px !important;
@@ -31,6 +35,7 @@ body {
     font-size: 10px;
     text-align: left;
     color: red;
+    height: 50px;
 }
 .code {
     font-weight: bold;

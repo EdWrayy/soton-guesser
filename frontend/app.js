@@ -236,6 +236,7 @@ function returnToMenu(socket){
         updateAll(game);
     }
     playerToState.set(player, 1);
+    updateClient(player);
 }
 
 function startAnswers(game, roundResults){
@@ -423,7 +424,7 @@ function updateLeaderboardAPI(socket, timeframe){
             return;
         }
         if (body && body['result']){
-            socket.emit('leaderboard', body['items']);
+            socket.emit('leaderboard', body['top']);
         }
         else{
             error(socket, (body && body['msg']) || "Failed to get leaderboard", false);

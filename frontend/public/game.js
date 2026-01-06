@@ -45,6 +45,19 @@ var app = new Vue({
             return 0;
         })
        },
+       setLeaderboard(board) {
+        let newBoard = [];
+        for(const element of board) {
+            if(element.hasOwnProperty("currentScore")) {
+                newBoard.push(element);
+            }
+            else if(element.hasOwnProperty("score")) {
+                newBoard.push({name: element.name, currentScore: element.score});
+            }
+        }
+        this.leaderboard = newBoard;
+        this.orderLeaderboard();
+       },
        error(message) {
         this.errorMessage = message;
         setTimeout(() => {this.errorMessage = "";}, 5000);
@@ -71,8 +84,8 @@ var app = new Vue({
        stopRegister() {
         this.registering = false;
        },
-       startLobby() {
-        socket.emit('start')
+       createLobby() {
+        socket.emit('start', this.username)
        },
        joinLobby() {
         socket.emit('join', this.code)
@@ -128,11 +141,10 @@ var app = new Vue({
        },
        startMenu(state) {
         this.update(state);
-        setTimeout(updateLeaderboard(),1000);
+        //setTimeout(updateLeaderboard(),2000);
        },
        startLobby(state, code) {
         this.update(state);
-        console.log(this.state.otherPlayers);
         this.leaderboard = this.state.otherPlayers;
         this.leaderboard.unshift(this.state.player);
         this.code = code;
@@ -210,7 +222,7 @@ function connect() {
 
     //handle setting leaderboard
     socket.on('leaderboard', function(board) {
-        app.leaderboard = board;
+        app.setLeaderboard(board);
     });
 
     socket.on('menu', function(state) {
@@ -371,7 +383,10 @@ function endTime() {
 
 //update leaderboard
 function updateLeaderboard() {
-    if (document.getElementById("leaderboardTimeframe") != null) {
-        socket.emit('leaderboard', document.getElementById("leaderboardTimeframe").value);
+    let element = document.getElementById('leaderboardTimeframe');
+    if (element != null) {
+        if(element.value != "Default") {
+            socket.emit('leaderboard', element.value);
+        }
     }
 }

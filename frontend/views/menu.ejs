@@ -1,11 +1,12 @@
 <!doctype html>
 <html lang="en">
-    <button class="btn btn-lg btn-primary" @click="startLobby">StartLobby</button>
+    <button class="btn btn-lg btn-primary" @click="createLobby">StartLobby</button>
     <p>Enter lobby code</p>
     <input type="text" v-model="code" class="form-control" placeholder="Code">
     <button class="btn btn-lg btn-primary" @click="joinLobby">Join</button>
     <p>Global leaderboard</p>
-    <select id="leaderboardTimeframe" onchange="updateLeaderboard()">
+    <select id="leaderboardTimeframe" onchange="updateLeaderboard()" onload="updateLeaderboard()">
+        <option value="Default">Select Leaderboard Duration</option>
         <option value="month">Month</option>
         <option value="allTime">All Time</option>
     </select>
