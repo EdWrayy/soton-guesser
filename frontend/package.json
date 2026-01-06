@@ -15,6 +15,7 @@
   "license": "ECS",
   "dependencies": {
     "@googlemaps/js-api-loader": "^1.16.10",
+    "@microsoft/signalr": "^10.0.0",
     "ejs": "^3.1.10",
     "express": "^4.22.1",
     "request": "^2.88.2",
