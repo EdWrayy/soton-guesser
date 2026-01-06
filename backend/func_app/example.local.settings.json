@@ -10,7 +10,12 @@
     "COSMOS_SCORES_CONTAINER": "scores",
     "COSMOS_PLACES_CONTAINER": "places",
     "COSMOS_LEADERBOARD_CONTAINER": "leaderboard",
+    "COSMOS_MATCHES_CONTAINER": "matches",
+    "COSMOS_LEASES_CONTAINER":"leases",
+    "COSMOS_RESULTS_CONTAINER":"Results",
     "AZURE_STORAGE_CONNECTION_STRING": "DefaultEndpointsProtocol=https;AccountName=southmptonguesserstorage;AccountKey=YOUR_STORAGE_ACCOUNT_KEY;EndpointSuffix=core.windows.net",
-    "BLOB_CONTAINER_NAME": "places-images"
+    "BLOB_CONTAINER_NAME": "places-images",
+    "ServiceBusConnection":"Endpoint=sb://your-game-bus.servicebus.windows.net/;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=YOUR_KEY",
+
   }
 }
