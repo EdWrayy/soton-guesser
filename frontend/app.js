@@ -9,6 +9,9 @@ const server = require('http').Server(app);
 const io = require('socket.io')(server);
 const request = require('request');
 
+//set up signalr
+const signalR = require('@microsoft/signalr');
+
 
 //Setup static page handling
 app.set('view engine', 'ejs');
@@ -27,6 +30,11 @@ const BACKEND_ENDPOINT = process.env.BACKEND || 'http://localhost:8181';
 let registeredPlayers = new Map();
 //list of logged in player usernames (subset of registered players)
 let loggedinPlayers = [];
+
+//Map of player usernames to player id
+let playerToId = new Map();
+//Map of player ids to player usernames
+let idToPlayer = new Map();
 
 //List of usernames of current admins (subset of logged in players)
 let admins = [];
@@ -54,10 +62,12 @@ let playerToState = new Map();
 //states 1 and 2 repeat until all the images have been guessed
 //Map of games to states
 let gameToState = new Map();
-//Map of player usernames to signal r tokens (who knows if we might need them)
+//Map of player usernames to pair of signal r urls and signal r tokens (who knows if we might need them)
 let playerToSignalR = new Map();
 //Map of lobby codes to json of match settings (number of rounds, number of players, countdown)
 let gameToSettings = new Map();
+//Map of game to the location currently being displayed
+let gameToCurrentLocation = new Map();
 
 //Map of usernames to sockets
 let playersToSockets = new Map();
@@ -73,6 +83,12 @@ let socketsToPlayers = new Map();
 //suspendPostUri: The "suspend" URL of the orchestration instance.
 //resumePostUri: The "resume" URL of the orchestration instance.
 let gameToOrchestrator = new Map();
+//orchestrator id to game
+let orchestratorToGame = new Map();
+
+let orchestratorToSignalURL = new Map();
+let orchestratorToConnection = new Map();
+let connectionToOrchestrator = new Map()
 
 
 //Start the server
@@ -87,7 +103,34 @@ function startServer() {
 function advance(game) {
     let state = gameToState.get(game);
     if (state == 0){
-        gameToState.set(game, 1);
+        startGameOrchestratorAPI(game);
+        updateAll(game);
+    }
+    else if (state == 1){
+        //I am not sure what to put here because this entirely depends on the game orchestrator blessing us with updateLeaderboard
+    }
+    else if (state == 2){
+        startScoring(game);
+    }
+}
+
+function startGuessing(game, location){
+    let players = gameToPlayers.get(game);
+    gameToCurrentLocation.set(game, location);
+    gameToState.set(game, 1);
+    for (let i = 0; i < players.length; i++){
+        let socket = playersToSockets.get(players[i]);
+        let time = gameToSettings.get(game)['countdown'];
+        socket.emit("guess", getState(players[i]), location, time);
+    }
+}
+
+function startScoring(game){
+    let players = gameToPlayers.get(game);
+    gameToState.set(game, 3);
+    for (let i = 0; i < players.length; i++){
+        let socket = playersToSockets.get(players[i]);
+        socket.emit("scores", getState(players[i]));
     }
 }
 
@@ -149,7 +192,7 @@ function startSession(admin, apiResponse) {
 }
 
 function joinSession(player, game, apiResponse) {
-    let token = apiResponse['signalRToken'];
+    let signalR = apiResponse['signalR'];
 
     //let player_state = {name : player, current_score: 0}
     //players.set(player, player_state);
@@ -157,7 +200,7 @@ function joinSession(player, game, apiResponse) {
     gameToPlayers.set(game, otherPlayers.push(player));
     playerToGame.set(player, game);
 
-    playerToSignalR.set(player, token);
+    playerToSignalR.set(player, signalR);
 
     playerToState.set(player, 2);
     let playerSocket = playersToSockets.get(player);
@@ -176,11 +219,14 @@ function register(socket, username, password){
     playerToState.set(username, 0);
 }
 
-function login(socket, username, password){
+function login(socket, username, password, responseBody){
     if (loggedinPlayers.includes(username)){
         error(socket, "This client is already logged in", false);
     }
     else{
+        let userId = responseBody['userId'];
+        playerToId.set(username, userId);
+        idToPlayer.set(userId, username);
         loggedinPlayers.push(username);
         playerToState.set(username, 1);
         socket.emit('menu', getState(username));
@@ -191,7 +237,7 @@ function returnToMenu(socket){
     let player = socketsToPlayers.get(socket);
     if (playerToGame.has(player)){
         let game = playerToGame.get(player);
-
+        leaveGameAPI(socket);
         let playersList = gameToPlayers.get(game);
         let playerIndex = playersList.indexOf(player);
         gameToPlayers.set(game, playersList.splice(playerIndex, 1));
@@ -204,12 +250,35 @@ function returnToMenu(socket){
             gameToAdmin.delete(game);
             //Most likely would need functionality to end the game since there is no admin or re-assign a new admin
         }
+        updateAll(game);
     }
     playerToState.set(player, 1);
-    updateAll(game);
+    
 }
 
+function startAnswers(game, roundResults){
+    let players = gameToPlayers.get(game);
+    gameToState.set(game, 2);
+    increaseScores(roundResults);
+    for (let i = 0; i < players.length; i++){
+        var socket = playersToSockets.get(players[i]);
+        socket.emit("awnsers", getState(players[i]), roundResults);
+    }
+}
 
+function increaseScores(roundResults){
+    for (let i = 0; i < roundResults.length; i++){
+        var result = roundResults[i];
+        var player = result['player_id'];
+        var score = result['data'];
+        var playerState = registeredPlayers.get(player);
+        registeredPlayers.set(player, {name: playerState['name'], currentScore: (playerState['currentScore'] + score), guess: playerState['guess']});
+    }
+}
+
+function concludeGame(game){
+
+}
 
 
 function error(socket, message, halt){
@@ -221,9 +290,10 @@ function error(socket, message, halt){
 
 //API functions
 function createLobbyAPI(socket, username){
+    var userId = playerToId.get(username);
     request.post(BACKEND_ENDPOINT + '/create_lobby', {
         json: true,
-        body: {'username' : username}
+        body: {'userId' : userId}
     }, function(err, response, body){
         console.log(body)
         if (body['result']){
@@ -236,9 +306,10 @@ function createLobbyAPI(socket, username){
 }
 
 function joinGameAPI(socket, username, game){
+    var playerId = playerToId.get(username);
     request.post(BACKEND_ENDPOINT + '/join_game', {
         json: true,
-        body: {'lobbyCode': game, 'playerId' : username}
+        body: {'lobbyCode': game, 'playerId' : playerId}
     }, function(err, response, body){
         if(body['result']){
             joinSession(username, game, body);
@@ -269,7 +340,7 @@ function loginPlayerAPI(socket, username, password){
         body: {'username' : username, 'password' : password}
     }, function(err, response, body){
         if(body['result']){
-            login(username, password);
+            login(socket, username, password, body);
         }
         else{
             error(socket, body['msg'], false);
@@ -291,6 +362,23 @@ function uploadImageAPI(socket, data){
     })
 }
 
+function leaveGameAPI(socket){
+    var player = socketsToPlayers.get(socket);
+    var playerId = playerToId.get(player);
+    var game = playerToGame.get(player);
+    request.post(BACKEND_ENDPOINT + '/quit_game', {
+        json: true,
+        body: {'matchCode' : game, 'playerId' : playerId} 
+    }, function(err, response, body){
+        if(body['result']){
+            console.log("Left game in the backend");
+        }
+        else{
+            error(socket, body['msg'], false);
+        }
+    })
+}
+
 function updateLeaderboardAPI(socket, timeframe){
     let response = request.get(BACKEND_ENDPOINT + '/leaderboard', params={'scope' : timeframe, 'limit' : 10});
     let response_json = response.json();
@@ -300,6 +388,96 @@ function updateLeaderboardAPI(socket, timeframe){
     else{
         error(socket, "Something went impossibly wrong", false);
     }
+}
+
+function makeGuessAPI(socket, guess){
+    let player = socketsToPlayers.get(socket);
+    let playerId = playerToId.get(player);
+    let game = playerToGame.get(player);
+    let actualLoc = gameToCurrentLocation.get(game);
+    let actualCoord = actualLoc['location'];
+
+    request.post(BACKEND_ENDPOINT + '/guess', {
+        json: true,
+        body: {'matchCode' : game, 'playerId' : playerId, 'guess' : guess}
+    }, function(err, response, body){
+        if(body['result']){
+            console.log("Guess successfully sent");
+        }
+        else{
+            console.log("Something went wrong went guessing");
+        }
+    })
+}
+
+function getLocationAPI(locationId){
+    let response = request.get(BACKEND_ENDPOINT + '/get_place', params={'id' : locationId});
+    let response_json = response.json();
+    if (response_json['result']){
+        return response_json['place'];
+    }
+    else{
+        throw new Error("Error in get location");
+    }
+}
+
+function startGameOrchestratorAPI(game){
+    var settings = gameToSettings.get(game);
+    var numRounds = settings['noOfRounds'];
+    var timeRounds = settings['countdown'];
+
+    request.post(BACKEND_ENDPOINT + '/start_game_trigger', {
+        json: true,
+        body: {'gameId' : game, 'rounds' : numRounds, 'time' : timeRounds}
+    }, function(err, response, body){
+        if (response.statusCode == 202){
+            var orchestratorId = body['Id'];
+            gameToOrchestrator.set(game, body);
+            orchestratorToGame.set(orchestratorId, game);
+            orchestratorToSignalURL.set(orchestratorId, "This is where the URL will go");
+
+            const connection = new signalR.HubConnectionBuilder().withUrl(orchestratorToSignalURL.get(orchestratorId)).build();
+
+            //Handle signalR signals
+            //Handle new round
+            connection.on("newRound", (data) => {
+                var locationId = data[1];
+                var gameId = orchestratorToGame.get(connectionToOrchestrator.get(connection));
+                try {
+                    var location = getLocationAPI(locationId);
+                    startGuessing(gameId, location);
+                }
+                catch(err){
+                    console.log("Something went wrong when getting location");
+                }
+
+            })
+
+            connection.on("endRound", (data) => {
+                var game = orchestratorToGame.get(connectionToOrchestrator.get(connection));
+                var players = gameToPlayers.get(game);
+                for (let i = 0; i < players.length; i++){
+                    var socket = playersToSockets.get(players[i]);
+                    socket.emit("roundEnd");
+                }
+            })
+
+            connection.on("updateLeaderboard", (data) => {
+                var game = orchestratorToGame.get(connectionToOrchestrator.get(connection));
+                var roundResults = data[0];
+                startAnswers(game, roundResults);
+                
+            })
+
+            connection.on("gameOver", (data) => {
+                var game = orchestratorToGame.get(connectionToOrchestrator.get(connection));
+                concludeGame(game);
+            })
+            
+            orchestratorToConnection.set(orchestratorId, connection);
+            connectionToOrchestrator.set(connection, orchestratorId);
+        }
+    })
 }
 
 //Handle new connection
@@ -341,11 +519,16 @@ io.on('connection', socket => {
     //Handle client uploading image
     socket.on('upload', (data) => {
         uploadImageAPI(socket, data);
-    })
+    });
 
     //Handle leaderboard request
     socket.on('leaderboard', (timeframe) => {
         updateLeaderboardAPI(socket, timeframe);
+    });
+
+    //Handle guesses
+    socket.on('guess', (guessLoc) => {
+        makeGuessAPI(socket, guessLoc)
     })
 });
 
