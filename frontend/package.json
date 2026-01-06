@@ -11,7 +11,7 @@
     "gdeploy": "gcloud app deploy --version test",
     "hdeploy": "git push heroku master"
   },
-  "author": "Oli Bills",
+  "author": "Group K",
   "license": "ECS",
   "dependencies": {
     "@googlemaps/js-api-loader": "^1.16.10",
