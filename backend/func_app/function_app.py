@@ -13,6 +13,7 @@ from azure.storage.blob import BlobServiceClient, ContentSettings
 from azure.cosmos import exceptions
 
 from azure.cosmos import CosmosClient, exceptions
+from azure.servicebus import ServiceBusClient, ServiceBusMessage
 
 app = func.FunctionApp()
 
@@ -26,6 +27,7 @@ LEADERBOARD = os.environ.get("COSMOS_LEADERBOARD_CONTAINER", "leaderboard")
 MATCHES = os.environ.get("COSMOS_MATCHES_CONTAINER", "matches")
 PLACES = os.environ.get("COSMOS_PLACES_CONTAINER", "places")
 LEASES = os.environ.get("COSMOS_LEASES_CONTAINER", "leases")
+RESULTS = os.environ.get("COSMOS_RESULTS_CONTAINER", "Results")
 
 client = CosmosClient.from_connection_string(COSMOS_CONNECTION_STRING)
 db = client.get_database_client(DB_NAME)
@@ -35,6 +37,7 @@ scores_container = db.get_container_client(SCORES)
 leaderboard_container = db.get_container_client(LEADERBOARD)
 matches_container = db.get_container_client(MATCHES)
 places_container = db.get_container_client(PLACES)
+results_container = db.get_container_client(RESULTS)
 
 
 # ---- Blob init ---- 
@@ -89,6 +92,26 @@ def _inc_score(user_id: str, scope: str, display_name: str, delta: int) -> None:
     doc["updatedAt"] = now
 
     scores_container.upsert_item(doc)
+
+def _enqueue_guess(game_id:str, player_id: str, lat: float, lon: float):
+    conn_str = os.environ["ServiceBusConnection"]
+    queue_name = "guesses"
+
+    payload = {
+        "game_id": game_id,
+        "player_id": player_id,
+        "lat": lat,
+        "lon": lon
+    }
+
+    with ServiceBusClient.from_connection_string(conn_str) as client:
+        with client.get_queue_sender(queue_name) as sender:
+            sender.send_messages(
+                ServiceBusMessage(
+                    json.dumps(payload),
+                    content_type="application/json"
+                )
+            )
 
 @app.route(route="register", auth_level=func.AuthLevel.FUNCTION, methods=["POST"])
 def register(req: func.HttpRequest) -> func.HttpResponse:
@@ -333,6 +356,9 @@ def create_place(req: func.HttpRequest) -> func.HttpResponse:
 def get_place(req: func.HttpRequest) -> func.HttpResponse:
     # GET /get_place
 
+    # Expects:
+    # {id: "id"}
+
     # returns:
     # place : {
     #         "id": place_id,
@@ -341,16 +367,16 @@ def get_place(req: func.HttpRequest) -> func.HttpResponse:
     #         "blob": {"container": BLOB_CONTAINER_NAME, "name": blob_name, "url": blob_url},
     #         "createdAt": _now_z(),
     # }
-
+    
     try:
-        # maybe too inefficient -> could be changed later
-        query = "SELECT * FROM matches ORDER BY RAND() OFFSET 0 LIMIT 1"
+        id = req.params.get("id")
+        query = f"SELECT * FROM places p WHERE p.id = {id}"
 
-        random_place = list(places_container.query_items(query=query, enable_cross_partition_query=True))[0]
-        return _json({"result": True, "msg": "OK", "place": random_place}, 500)
+        place = list(places_container.query_items(query=query, enable_cross_partition_query=True))[0]
+        return _json({"result": True, "msg": "OK", "place": place}, 200)
     
     except Exception as e:
-        logging.exception("Error in create_place")
+        logging.exception("Error in get_place")
         return _json({"result": False, "msg": str(e)}, 500)
 
 
@@ -359,7 +385,13 @@ def get_place(req: func.HttpRequest) -> func.HttpResponse:
 # Initialises a lobby for the game
 # Returns a game ID and signal R access token
 @app.route(route="create_lobby", auth_level=func.AuthLevel.FUNCTION, methods=["POST"])
-def create_lobby(req: func.HttpRequest) -> func.HttpResponse:
+@app.signalr_connection_info(
+    arg_name="connection_info",
+    hub_name="test",
+    user_id="{json:playerId}",
+    connection_string_setting="AzureSignalRConnectionString"
+)
+def create_lobby(req: func.HttpRequest, connection_info: dict) -> func.HttpResponse:
     # Expects:
     # {userId: "id"}
 
@@ -378,7 +410,7 @@ def create_lobby(req: func.HttpRequest) -> func.HttpResponse:
         match_id = f"{match_id:06d}"
 
         # check if a code already exists within the matches container
-        query = "SELECT m.matchId FROM matches"
+        query = "SELECT m.matchId FROM matches m"
 
         codes = list(matches_container.query_items(query=query, enable_cross_partition_query=True))
 
@@ -386,32 +418,37 @@ def create_lobby(req: func.HttpRequest) -> func.HttpResponse:
             match_id = random.randint(0, 999999)
             match_id = f"{match_id:06d}"
 
-        # get SignalR access token
-        signalR_token = "placeholder"
-
         # add match to matches container
         default_match_settings = {"noOfRounds":8, "maxPlayers":8, "countdown":60}
         doc = {"matchId": match_id, "players": [{"userId": host_id}], "matchSettings": default_match_settings}
         matches_container.create_item(doc)
 
         # return response
-        return _json({"result": True, "msg": "OK", "matchCode": match_id, "signalRToken": signalR_token, "matchSettings": default_match_settings}, 201)
+        return _json({"result": True, "msg": "OK", "matchCode": match_id, "signalR": {
+                    "url": connection_info["url"],
+                    "accessToken": connection_info["accessToken"]
+                }, "matchSettings": default_match_settings}, 201)
     
     except Exception as e:
-        logging.exception("Error in create_place")
+        logging.exception("Error in create_lobby")
         return _json({"result": False, "msg": str(e)}, 500)
 
 # Join game
 # Adds player to the lobby
 # Returns signal R access token
 @app.route(route="join_game", auth_level=func.AuthLevel.FUNCTION, methods=["POST"])
-def join_game(req: func.HttpRequest) -> func.HttpResponse:
+@app.signalr_connection_info(
+    arg_name="connection_info",
+    hub_name="test",
+    user_id="{json:playerId}",
+    connection_string_setting="AzureSignalRConnectionString"
+)
+def join_game(req: func.HttpRequest, connection_info: dict) -> func.HttpResponse:
     # Expects:
     # {matchCode: str, playerId: str}
 
     # Adds the player to the lobby:
-    # {matchId: unique 6 digit code
-    # host: "hostId, players: [{userId: "uuid"}] matchSettings:{noOfRounds:int, maxPlayers:int, countdown:int}"}
+    # {matchId: unique 6 digit code}
 
     try:
         body = req.get_json()
@@ -428,19 +465,19 @@ def join_game(req: func.HttpRequest) -> func.HttpResponse:
         player_in_lobby = any(player["userId"] == player_id for player in players)
         lobby_count_exceeded = len(players) >= max_players
 
-        # get SignalR access token
-        signalR_token = "placeholder"
-
         if (player_in_lobby):
-            return _json({"result": False, "msg": "Player already in lobby"}, 201)
+            return _json({"result": False, "msg": "Player already in lobby"}, 409)
         elif (lobby_count_exceeded):
-            return _json({"result": False, "msg": "Lobby is full"}, 201)
+            return _json({"result": False, "msg": "Lobby is full"}, 409)
         else:
             # replace entry
             item["players"].append({"userId": player_id})
             matches_container.upsert_item(item)
             # return response
-            return _json({"result": True, "msg": "OK", "signalRToken": signalR_token}, 201)
+            return _json({"result": True, "msg": "OK", "signalR": {
+                    "url": connection_info["url"],
+                    "accessToken": connection_info["accessToken"]
+                }}, 201)
 
     except Exception as e:
         logging.exception("Error in join_game")
@@ -469,22 +506,21 @@ def quit_game(req: func.HttpRequest) -> func.HttpResponse:
         lobby_empty = len(players) <= 1
 
         if (not player_in_lobby):
-            return _json({"result": False, "msg": "Player isn't in lobby"}, 201)
+            return _json({"result": False, "msg": "Player isn't in lobby"}, 400)
         elif (lobby_empty):
             # delete entry
             matches_container.delete_item(item)
-            return _json({"result": True, "msg": "Lobby closed"}, 201)
+            return _json({"result": True, "msg": "Lobby closed"}, 200)
         else:
             # replace entry
             item["players"] = [player for player in players if player["userId"] != player_id]
             matches_container.upsert_item(item)
 
-            return _json({"result": True, "msg": "OK"}, 201)
+            return _json({"result": True, "msg": "OK"}, 200)
 
     except Exception as e:
         logging.exception("Error in quit_game")
         return _json({"result": False, "msg": str(e)}, 500)
-
 
 
 # Change settings
@@ -514,41 +550,52 @@ def settings(req: func.HttpRequest) -> func.HttpResponse:
         return _json({"result": False, "msg": str(e)}, 500)
 
 # Guess
-# Add guess to redis DB and service bus queue
+# Add guess to service bus queue
 @app.route(route="guess", auth_level=func.AuthLevel.FUNCTION, methods=["POST"])
 def guess(req: func.HttpRequest) -> func.HttpResponse:
-    # expects: {matchCode: code, playerId: "id", actual: {lat:lat, lon:lon}, guess:{lat:lat, lon:lon}}
+    # expects: {matchCode: code, playerId: "id", guess:{lat:lat, lon:lon}}
 
-    
     try:
         body = req.get_json()
         match_id = body['matchCode']
         player_id = body["playerId"]
-        actual = ["actual"]
-        player_guess = ["guess"]
+        player_guess = body["guess"]
+        lat = float(player_guess["lat"])
+        lon = float(player_guess["lon"])
 
-        return _json({"result": True, "msg": "OK"}, 201)
+        if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+            raise ValueError("Invalid coordinates")
 
-    # Add to Redis
+        # Add to service bus queue
+        _enqueue_guess(match_id, player_id, lat, lon)
 
-    # Add to service bus queue
+        return _json({"result": True, "msg": "OK"}, 200)
 
+    except KeyError as e:
+        return _json({"result": False, "msg": f"Missing field: {e}"}, 400)
+    
+    except ValueError as e:
+        return _json({"result": False, "msg": str(e)}, 400)
+    
     except Exception as e:
         logging.exception("Error in guess")
         return _json({"result": False, "msg": str(e)}, 500)
     
 
 # Get game results
-# Write results to SQL
+# Write results to Cosmos
 # End game
 # Clears DBs and updates player data
-@app.route(route="results", auth_level=func.AuthLevel.FUNCTION, methods=["PUT"])
+@app.route(route="results", auth_level=func.AuthLevel.FUNCTION, methods=["POST"])
 def results(req: func.HttpRequest) -> func.HttpResponse:
-    # Expects: {matchCode: 6 digit code, players:[{playerId: id, score:score}]}
+    # Expects: {matchCode: 6 digit code}
+    # Returns: {playerScores: {
+    #        "player_id": player_id,
+    #        "data": guess_data
+    #    }}
     try:
         body = req.get_json()
         match_id = body['matchCode']
-        players = body["players"]
 
         # Remove entry from matches container
         query = f"SELECT * FROM matches m WHERE m.matchId = {match_id}"
@@ -556,11 +603,18 @@ def results(req: func.HttpRequest) -> func.HttpResponse:
 
         matches_container.delete_item(item=item, partition_key=item["partitionKey"])
 
+        # get match results
+
+        query = f"SELECT * FROM Results r WHERE r.game_id = {match_id}"
+        item = list(results_container.query_items(query=query, enable_cross_partition_query=True))[0]
+
+        player_scores = item["round_scores"]
+
         # Add scores to users
-        for player in players:
+        for player_score in player_scores:
 
             # get user
-            id = player["playerId"]
+            id = player_score["player_id"]
             user = _get_user_by_user_id(id)
 
             if (not user):
@@ -568,14 +622,12 @@ def results(req: func.HttpRequest) -> func.HttpResponse:
             else: 
                 # Update players score data
                 display_name = user["displayName"]
-                delta = player["score"]
+                delta = player_score["data"]
                 if (delta > 0):
                     _inc_score(id, "alltime", display_name, delta)
                     _inc_score(id, _month_scope(), display_name, delta)
 
-
-
-        return _json({"result": True, "msg": "OK"}, 201)
+        return _json({"result": True, "msg": "OK", "playerScores": player_scores}, 200)
 
     except Exception as e:
         logging.exception("Error in results")
