@@ -149,7 +149,7 @@ def process_scores(game_id: str):
 
     return round_results
 @app.activity_trigger(input_name="data")
-@app.generic_output_binding(arg_name="signalRMessages", type="signalR", hubName="test", connectionStringSetting="SignalRConnection")
+@app.generic_output_binding(arg_name="signalRMessages", type="signalR", hubName="{data[game_id]}", connectionStringSetting="SignalRConnection")
 def signalr_broadcast(data: dict, signalRMessages: func.Out[str]):
     """
     Generic SignalR broadcaster
