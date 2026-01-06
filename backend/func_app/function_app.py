@@ -15,6 +15,10 @@ from azure.cosmos import exceptions
 from azure.cosmos import CosmosClient, exceptions
 from azure.servicebus import ServiceBusClient, ServiceBusMessage
 
+from azure.storage.blob import generate_blob_sas, BlobSasPermissions
+from datetime import timedelta
+from urllib.parse import urlparse
+
 app = func.FunctionApp()
 
 # ----- Cosmos init -----
@@ -352,32 +356,69 @@ def create_place(req: func.HttpRequest) -> func.HttpResponse:
         logging.exception("Error in create_place")
         return _json({"result": False, "msg": str(e)}, 500)
     
+
+def _storage_account_name_and_key() -> tuple[str, str]:
+    # Parses "DefaultEndpointsProtocol=...;AccountName=...;AccountKey=...;EndpointSuffix=..."
+    parts = dict(
+        item.split("=", 1) for item in AZURE_STORAGE_CONNECTION_STRING.split(";") if "=" in item
+    )
+    return parts["AccountName"], parts["AccountKey"]
+
+def _blob_url_with_sas(container: str, blob_name: str, minutes: int = 5) -> str:
+    account_name, account_key = _storage_account_name_and_key()
+
+    sas = generate_blob_sas(
+        account_name=account_name,
+        container_name=container,
+        blob_name=blob_name,
+        account_key=account_key,
+        permission=BlobSasPermissions(read=True),
+        expiry=datetime.datetime.now(datetime.timezone.utc) + timedelta(minutes=minutes)
+    )
+
+    return f"https://{account_name}.blob.core.windows.net/{container}/{blob_name}?{sas}"
+
+    
 @app.route(route="get_place", auth_level=func.AuthLevel.FUNCTION, methods=["GET"])
 def get_place(req: func.HttpRequest) -> func.HttpResponse:
-    # GET /get_place
+    """
+    GET /get_place
 
-    # Expects:
-    # {id: "id"}
+    Query:
+    - id: string (place UUID)
 
-    # returns:
-    # place : {
-    #         "id": place_id,
-    #         "name": name,
-    #         "location": {"lat": lat, "lon": lon},
-    #         "blob": {"container": BLOB_CONTAINER_NAME, "name": blob_name, "url": blob_url},
-    #         "createdAt": _now_z(),
-    # }
-    
+    Returns:
+    - place object including a short-lived SAS URL for the image
+    """
     try:
-        id = req.params.get("id")
-        query = f"SELECT * FROM places p WHERE p.id = {id}"
+        place_id = req.params.get("id")
+        if not place_id:
+            return _json({"result": False, "msg": "Missing param: id"}, 400)
 
-        place = list(places_container.query_items(query=query, enable_cross_partition_query=True))[0]
+        # Parameterised query
+        query = "SELECT TOP 1 * FROM p WHERE p.id = @id"
+        params = [{"name": "@id", "value": place_id}]
+        items = list(places_container.query_items(
+            query=query,
+            parameters=params,
+            enable_cross_partition_query=True
+        ))
+        if not items:
+            return _json({"result": False, "msg": "Place not found"}, 404)
+
+        place = items[0]
+
+        container = place["blob"]["container"]
+        blob_name = place["blob"]["name"]
+
+        place["blob"]["url"] = _blob_url_with_sas(container, blob_name, minutes=5)
+
         return _json({"result": True, "msg": "OK", "place": place}, 200)
-    
+
     except Exception as e:
         logging.exception("Error in get_place")
         return _json({"result": False, "msg": str(e)}, 500)
+
 
 
     
