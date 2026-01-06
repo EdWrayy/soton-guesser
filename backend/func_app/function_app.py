@@ -425,12 +425,14 @@ def get_place(req: func.HttpRequest) -> func.HttpResponse:
 # Start game
 # Initialises a lobby for the game
 # Returns a game ID and signal R access token
-@app.route(route="create_lobby", auth_level=func.AuthLevel.FUNCTION, methods=["POST"])
+"""
 @app.signalr_connection_info(
     arg_name="connection_info",
     user_id="{json:playerId}",
     connection_string_setting="AzureSignalRConnectionString"
 )
+
+@app.route(route="create_lobby", auth_level=func.AuthLevel.FUNCTION, methods=["POST"])
 def create_lobby(req: func.HttpRequest, connection_info: dict) -> func.HttpResponse:
     # Expects:
     # {userId: "id"}
@@ -477,12 +479,20 @@ def create_lobby(req: func.HttpRequest, connection_info: dict) -> func.HttpRespo
 # Join game
 # Adds player to the lobby
 # Returns signal R access token
-@app.route(route="join_game", auth_level=func.AuthLevel.FUNCTION, methods=["POST"])
+"""
+
+
+"""
 @app.signalr_connection_info(
     arg_name="connection_info",
     user_id="{json:playerId}",
     connection_string_setting="AzureSignalRConnectionString"
 )
+"""
+
+"""
+@app.route(route="join_game", auth_level=func.AuthLevel.FUNCTION, methods=["POST"])
+
 def join_game(req: func.HttpRequest, connection_info: dict) -> func.HttpResponse:
     # Expects:
     # {matchCode: str, playerId: str}
@@ -527,6 +537,8 @@ def join_game(req: func.HttpRequest, connection_info: dict) -> func.HttpResponse
         logging.exception("Error in join_game")
         return _json({"result": False, "msg": str(e)}, 500)
 
+"""
+
 # Quit game
 # Removes player from the lobby
 @app.route(route="quit_game", auth_level=func.AuthLevel.FUNCTION, methods=["POST"])
@@ -569,7 +581,7 @@ def quit_game(req: func.HttpRequest) -> func.HttpResponse:
 
 # Change settings
 # Takes new settings and changes it in the database
-@app.settings(route="change_settings", auth_level=func.AuthLevel.FUNCTION, methods=["PUT"])
+@app.route(route="change_settings", auth_level=func.AuthLevel.FUNCTION, methods=["PUT"])
 def settings(req: func.HttpRequest) -> func.HttpResponse:
     # expects: {matchCode: code, matchSettings:{noOfRounds:int, maxPlayers:int, countdown:int}}
     
