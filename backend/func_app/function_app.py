@@ -8,6 +8,7 @@ import uuid
 import bcrypt
 import base64
 import binascii
+import requests
 from typing import Any, Dict, Optional
 from azure.storage.blob import BlobServiceClient, ContentSettings
 from azure.cosmos import exceptions
@@ -42,6 +43,9 @@ leaderboard_container = db.get_container_client(LEADERBOARD)
 matches_container = db.get_container_client(MATCHES)
 places_container = db.get_container_client(PLACES)
 results_container = db.get_container_client(RESULTS)
+
+signalR_connection_string = os.environ["AZURE_SIGNALR_CONNECTION_STRING"]
+signalr_endpoint = os.environ["SIGNALR_ENDPOINT"]
 
 
 # ---- Blob init ---- 
@@ -420,18 +424,11 @@ def get_place(req: func.HttpRequest) -> func.HttpResponse:
         return _json({"result": False, "msg": str(e)}, 500)
 
 
-
-    
-# Start game
-# Initialises a lobby for the game
-# Returns a game ID and signal R access token
+## Start game
+## Initialises a lobby for the game
+## Returns a game ID and signal R access token
 @app.route(route="create_lobby", auth_level=func.AuthLevel.FUNCTION, methods=["POST"])
-@app.signalr_connection_info(
-    arg_name="connection_info",
-    user_id="{json:playerId}",
-    connection_string_setting="AzureSignalRConnectionString"
-)
-def create_lobby(req: func.HttpRequest, connection_info: dict) -> func.HttpResponse:
+def create_lobby(req: func.HttpRequest) -> func.HttpResponse:
     # Expects:
     # {userId: "id"}
 
@@ -461,9 +458,23 @@ def create_lobby(req: func.HttpRequest, connection_info: dict) -> func.HttpRespo
         doc = {"matchId": match_id, "players": [{"userId": host_id}], "matchSettings": default_match_settings}
         matches_container.create_item(doc)
 
-        # dynamically set hub_name
-        connection_info['hub_name'] = match_id
+        hub_name = match_id
 
+        # REST API to get the connection info (SignalR REST API)
+        url = f"{signalr_endpoint}/api/v1/hubs/{hub_name}/connectionInfo"
+
+        headers = {
+            'Content-Type': 'application/json',
+            'Authorization': f'Bearer {signalR_connection_string}'
+        }
+
+        response = requests.post(url, headers=headers, json={
+            "userId": host_id
+        })
+
+        if response.status_code != 200:
+            return _json({"result": False, "msg": response.text}, response.status_code)
+        connection_info = response.json()
         # return response
         return _json({"result": True, "msg": "OK", "matchCode": match_id, "signalR": {
                     "url": connection_info["url"],
@@ -478,12 +489,8 @@ def create_lobby(req: func.HttpRequest, connection_info: dict) -> func.HttpRespo
 # Adds player to the lobby
 # Returns signal R access token
 @app.route(route="join_game", auth_level=func.AuthLevel.FUNCTION, methods=["POST"])
-@app.signalr_connection_info(
-    arg_name="connection_info",
-    user_id="{json:playerId}",
-    connection_string_setting="AzureSignalRConnectionString"
-)
-def join_game(req: func.HttpRequest, connection_info: dict) -> func.HttpResponse:
+
+def join_game(req: func.HttpRequest) -> func.HttpResponse:
     # Expects:
     # {matchCode: str, playerId: str}
 
@@ -496,11 +503,20 @@ def join_game(req: func.HttpRequest, connection_info: dict) -> func.HttpResponse
         player_id = body['playerId']
 
         # fetch current lobby state
-        query = f"SELECT * FROM matches m WHERE m.matchId = {match_id}"
-        item = list(matches_container.query_items(query=query, enable_cross_partition_query=True))[0]
+        query = "SELECT * FROM matches m WHERE m.matchId = @matchId"
+        items = list(matches_container.query_items(
+            query=query,
+            parameters=[{"name": "@matchId", "value": match_id}],
+            enable_cross_partition_query=True
+        ))
+
+        if not items:
+            return _json({"result": False, "msg": "Match not found"}, 404)
+
+        item = items[0]
+        players = item.get("players", [])
 
         max_players = item["matchSettings"]["maxPlayers"]
-        players = item["players"]
 
         player_in_lobby = any(player["userId"] == player_id for player in players)
         lobby_count_exceeded = len(players) >= max_players
@@ -510,13 +526,28 @@ def join_game(req: func.HttpRequest, connection_info: dict) -> func.HttpResponse
         elif (lobby_count_exceeded):
             return _json({"result": False, "msg": "Lobby is full"}, 409)
         else:
+            hub_name = match_id
+
+            # REST API to get the connection info (SignalR REST API)
+            url = f"{signalr_endpoint}/api/v1/hubs/{hub_name}/connectionInfo"
+
+            headers = {
+                'Content-Type': 'application/json',
+                'Authorization': f'Bearer {signalR_connection_string}'
+            }
+
+            response = requests.post(url, headers=headers, json={
+                "userId": player_id
+            })
+
+            if response.status_code != 200:
+                return _json({"result": False, "msg": response.text}, response.status_code)
+            connection_info = response.json()
+            
             # replace entry
             item["players"].append({"userId": player_id})
             matches_container.upsert_item(item)
             
-            # dynamically set hub_name
-            connection_info['hub_name'] = match_id
-
             # return response
             return _json({"result": True, "msg": "OK", "signalR": {
                     "url": connection_info["url"],
@@ -569,7 +600,7 @@ def quit_game(req: func.HttpRequest) -> func.HttpResponse:
 
 # Change settings
 # Takes new settings and changes it in the database
-@app.settings(route="change_settings", auth_level=func.AuthLevel.FUNCTION, methods=["PUT"])
+@app.route(route="change_settings", auth_level=func.AuthLevel.FUNCTION, methods=["PUT"])
 def settings(req: func.HttpRequest) -> func.HttpResponse:
     # expects: {matchCode: code, matchSettings:{noOfRounds:int, maxPlayers:int, countdown:int}}
     
