@@ -277,7 +277,33 @@ function increaseScores(roundResults){
 }
 
 function concludeGame(game){
+    var admin = gameToAdmin.get(game);
+    var players = gameToPlayers.get(game);
+    var orchestrator = gameToOrchestrator.get(game);
+    var connection = orchestratorToConnection.get(game);
 
+    if (admin != null){
+        adminToGame.delete(admin);
+    }
+    if (players != null){
+        for (let i = 0; i < players.length; i++){
+        var player = players[i];
+        playerToGame.delete(player);
+        }   
+    }
+    if (connection != null){
+        connectionToOrchestrator.delete(connection);
+    }
+    if (orchestrator != null){
+        orchestratorToConnection.delete(orchestrator);
+    }
+
+    gameToAdmin.delete(game);
+    gameToPlayers.delete(game);
+    gameToOrchestrator.delete(game);
+    gameToCurrentLocation.delete(game);
+    gameToSettings.delete(game);
+    gameToState.delete(game);
 }
 
 
@@ -421,6 +447,20 @@ function getLocationAPI(locationId){
     }
 }
 
+function resultsAPI(game){
+    request.post(BACKEND_ENDPOINT + '/results', {
+        json: true, 
+        body: {'matchCode' : game}
+    }, function(err, response, body){
+        if(body['result']){
+            concludeGame(game);
+        }
+        else{
+            console.log(body['msg']);
+        }
+    })
+}
+
 function startGameOrchestratorAPI(game){
     var settings = gameToSettings.get(game);
     var numRounds = settings['noOfRounds'];
@@ -471,7 +511,7 @@ function startGameOrchestratorAPI(game){
 
             connection.on("gameOver", (data) => {
                 var game = orchestratorToGame.get(connectionToOrchestrator.get(connection));
-                concludeGame(game);
+                resultsAPI(game);
             })
             
             orchestratorToConnection.set(orchestratorId, connection);
@@ -529,6 +569,12 @@ io.on('connection', socket => {
     //Handle guesses
     socket.on('guess', (guessLoc) => {
         makeGuessAPI(socket, guessLoc)
+    });
+
+    socket.on('advance', () => {
+        var player = socketsToPlayers.get(socket);
+        var game = playerToGame.get(player);
+        advance(game);
     })
 });
 
