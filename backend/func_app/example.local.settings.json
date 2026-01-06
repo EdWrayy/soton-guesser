@@ -1,0 +1,16 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "FUNCTIONS_WORKER_RUNTIME": "python",
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "DefaultFunctionAppKey": "YOUR_FUNCTION_APP_KEY",
+    "COSMOS_CONNECTION_STRING": "AccountEndpoint=https://southampton-guesser-cosmosdb.documents.azure.com:443/;AccountKey=YOUR_COSMOS_DB_KEY;",
+    "COSMOS_DATABASE_NAME": "soton-guessr",
+    "COSMOS_USERS_CONTAINER": "users",
+    "COSMOS_SCORES_CONTAINER": "scores",
+    "COSMOS_PLACES_CONTAINER": "places",
+    "COSMOS_LEADERBOARD_CONTAINER": "leaderboard",
+    "AZURE_STORAGE_CONNECTION_STRING": "DefaultEndpointsProtocol=https;AccountName=southmptonguesserstorage;AccountKey=YOUR_STORAGE_ACCOUNT_KEY;EndpointSuffix=core.windows.net",
+    "BLOB_CONTAINER_NAME": "places-images"
+  }
+}
