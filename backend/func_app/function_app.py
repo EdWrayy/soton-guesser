@@ -558,6 +558,8 @@ def join_game(req: func.HttpRequest) -> func.HttpResponse:
         logging.exception("Error in join_game")
         return _json({"result": False, "msg": str(e)}, 500)
 
+"""
+
 # Quit game
 # Removes player from the lobby
 @app.route(route="quit_game", auth_level=func.AuthLevel.FUNCTION, methods=["POST"])
@@ -600,6 +602,7 @@ def quit_game(req: func.HttpRequest) -> func.HttpResponse:
 
 # Change settings
 # Takes new settings and changes it in the database
+@app.route(route="change_settings", auth_level=func.AuthLevel.FUNCTION, methods=["PUT"])
 @app.route(route="change_settings", auth_level=func.AuthLevel.FUNCTION, methods=["PUT"])
 def settings(req: func.HttpRequest) -> func.HttpResponse:
     # expects: {matchCode: code, matchSettings:{noOfRounds:int, maxPlayers:int, countdown:int}}

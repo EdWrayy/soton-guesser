@@ -23,7 +23,10 @@ app.get('/', (req, res) => {
 });
 
 //URL of backend API
-const BACKEND_ENDPOINT = process.env.BACKEND || 'http://localhost:8181';
+const BACKEND_ENDPOINT = process.env.BACKEND || 'https://southampton-guesser-functions-awdkf4e5crf8b8bd.francecentral-01.azurewebsites.net'
+const BACKEND_KEY = process.env.BACKEND_KEY || '?==';
+const DURABLE_FUNCTIONS_ENDPOINT = process.env.DURABLE_FUNCTIONS_ENDPOINT || 'http://localhost:7071/api/';
+const SIGNALR_ENDPOINT = process.env.SIGNALR_ENDPOINT || 'http://localhost:7071/api/';
 
 //Server state
 //List of registered player username
@@ -150,6 +153,10 @@ function updateClient(player){
 function getState(player){
     const playerState = loggedinPlayers.get(player);
     const game = playerToGame.get(player);
+    if (game == null){
+        return {state: {currentClientMode: playerToState.get(player)}, isAdmin: false, player: playerState, otherPlayers: []}
+    }
+    console.log("Getting state for player " + player + " in game " + game);
     const gameState = gameToState.get(game);
     const isAdmin = admins.includes(player);
     const playerMode = playerToState.get(player);
@@ -220,7 +227,7 @@ function register(socket, username, password){
 }
 
 function login(socket, username, password, responseBody){
-    if (loggedinPlayers.includes(username)){
+    if (loggedinPlayers.has(username)){
         error(socket, "This client is already logged in", false);
     }
     else{
@@ -232,6 +239,7 @@ function login(socket, username, password, responseBody){
         playersToSockets.set(username, socket);
         socketsToPlayers.set(socket, username);
         playerToState.set(username, 1);
+        console.log("Player " + username + " logged in with id " + userId);
         socket.emit('menu', getState(username));
     }
 }
@@ -350,10 +358,18 @@ function joinGameAPI(socket, username, game){
 }
 
 function registerPlayerAPI(socket, username, password){
-    request.post(BACKEND_ENDPOINT + '/register', {
+    request.post(BACKEND_ENDPOINT + '/register' + BACKEND_KEY, {
         json: true,
         body: {'username' : username, 'password' : password}
     }, function(err, response, body){
+        if (err){
+            error(socket, "Something went wrong when contacting the backend", false);
+            return;
+        }
+        if (response.statusCode !== 200 && response.statusCode !== 201){
+            error(socket, "Registration failed with status code " + response.statusCode, false);
+            return;
+        }
         if(body['result']){
             register(socket, username, password);
         }
@@ -364,10 +380,21 @@ function registerPlayerAPI(socket, username, password){
 }
 
 function loginPlayerAPI(socket, username, password){
-    request.post(BACKEND_ENDPOINT + '/login', {
+    request.post(BACKEND_ENDPOINT + '/login' + BACKEND_KEY, {
         json: true,
         body: {'username' : username, 'password' : password}
     }, function(err, response, body){
+        console.log(body)
+        if (err){
+            error(socket, "Something went wrong when contacting the backend", false);
+            return;
+        }
+        if (response.statusCode !== 200){
+            error(socket, "Login failed with status code " + response.statusCode, false);
+            return;
+        }
+        console.log("Player " + username + " logged in with id " + body['userId']);
+        console.log(body);
         if(body['result']){
             login(socket, username, password, body);
         }

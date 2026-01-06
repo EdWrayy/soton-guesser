@@ -50,12 +50,12 @@ var app = new Vue({
         setTimeout(() => {this.errorMessage = "";}, 5000);
        },
        login() {
-        socket.emit('login', [this.username,this.password]);
+        socket.emit('login', this.username,this.password);
         this.password = "";
        },
        register() {
         if (this.password == this.confirmPassword) {
-            socket.emit('register', [this.username,this.password]);
+            socket.emit('register', this.username,this.password);
             this.password = "";
             this.confirmPassword = "";
         }
@@ -241,6 +241,10 @@ function connect() {
     //handle state update
     socket.on('update', function(state) {
         app.update(state);
+    });
+
+    socket.on('fail', function(message) {
+        app.error(message);
     });
 
     //Handle disconnection
