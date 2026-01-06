@@ -112,7 +112,8 @@ def prepare_round(params: dict):
 
     return {
         "image_url": f"{blob_client.url}?{sas_token}",
-        "round": round_num
+        "round": round_num,
+        "location_id": location['id']
     }
 
 @app.activity_trigger(input_name="gameId")
