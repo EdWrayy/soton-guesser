@@ -214,3 +214,6 @@ __marimo__/
 .vscode/
 
 local.settings.json
+
+node_modules/
+*/node_modules/
