@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="en">
+    <button class="btn btn-lg btn-primary" @click="startLobby">StartLobby</button>
+    <p>Enter lobby code</p>
+    <input type="text" v-model="code" class="form-control" placeholder="Code">
+    <button class="btn btn-lg btn-primary" @click="joinLobby">Join</button>
+    <p>Global leaderboard</p>
+    <select id="leaderboardTimeframe" onchange="updateLeaderboard()">
+        <option value="month">Month</option>
+        <option value="allTime">All Time</option>
+    </select>
+    <%- include('leaderboard'); -%>
+    <button class="btn btn-lg btn-primary" @click="toUpload">Upload location</button>
+</html>

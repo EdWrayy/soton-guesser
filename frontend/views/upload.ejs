@@ -1,0 +1,12 @@
+<!doctype html>
+<html lang="en">
+    <p>Upload Image:</p>
+    <input type="file" id="image" name="image" accept="image/png, image/jpeg, image/jpg" />
+    <p>Location Name:</p>
+    <input type="text" v-model="locName" class="form-control" placeholder="">
+    <p>Lat:</p>
+    <input type="text" v-model="lat" class="form-control" placeholder="">
+    <p>Lng:</p>
+    <input type="text" v-model="lng" class="form-control" placeholder="">
+    <button class="btn btn-lg btn-primary" @click="upload">Upload</button>
+</html>
