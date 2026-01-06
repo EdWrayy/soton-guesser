@@ -122,7 +122,7 @@ function startScoring(game){
 
 //Update all clients
 function updateAll(game){
-    for (let [player] of gameToPlayers.get(game)){
+    for (let player of gameToPlayers.get(game)){
         updateClient(player);
     }
 }
@@ -144,7 +144,14 @@ function getState(player){
     const isAdmin = admins.includes(player);
     const playerMode = playerToState.get(player);
     const playerIndex = gameToPlayers.get(game).indexOf(player);
-    const otherPlayers = gameToPlayers.get(game).splice(playerIndex, 1);
+    //const otherPlayers = gameToPlayers.get(game).splice(playerIndex, 1);
+    const otherPlayers = [];
+    for(const otherPlayer of gameToPlayers.get(game)) {
+        const info = loggedinPlayers.get(otherPlayer);
+        if (info['name'] != player) {
+            otherPlayers.push(info);
+        }
+    }
     return {state: {currentClientMode: playerMode, gameState: gameState}, isAdmin: isAdmin, player: playerState, otherPlayers: otherPlayers};
 }
 
@@ -178,7 +185,8 @@ function joinSession(player, game, apiResponse) {
     let signalR = apiResponse['signalR'];
 
     let otherPlayers = gameToPlayers.get(game);
-    gameToPlayers.set(game, otherPlayers.push(player));
+    otherPlayers.push(player)
+    gameToPlayers.set(game, otherPlayers);
     playerToGame.set(player, game);
 
     playerToSignalR.set(player, signalR);
@@ -311,6 +319,16 @@ function createLobbyAPI(socket, username){
         if (body && body['result']){
             startSession(username, body);
         }
+        /*
+        //TODO - temp remove for testing
+        else if (!body['result']){
+            startSession(username,{"result": true, "msg": "OK", "matchCode": "testmatchid", "signalR": {
+                    "url": "testurl",
+                    "accessToken": "testtoken"
+                }, "matchSettings": {"noOfRounds":8, "maxPlayers":8, "countdown":60}})
+        }
+        //end temp
+        */
         else{
             error(socket, (body && body['msg']) || "Failed to create lobby", false);
         }
@@ -329,6 +347,16 @@ function joinGameAPI(socket, username, game){
         if(body && body['result']){
             joinSession(username, game, body);
         }
+        /*
+        //TODO - temp remove for testing
+        else if (!body['result']){
+            joinSession(username, game,{"result": true, "msg": "OK", "matchCode": "testmatchid", "signalR": {
+                    "url": "testurl",
+                    "accessToken": "testtoken"
+                }, "matchSettings": {"noOfRounds":8, "maxPlayers":8, "countdown":60}})
+        }
+        //end temp
+        */
         else{
             error(socket, (body && body['msg']) || "Failed to join game", false);
         }
@@ -483,6 +511,7 @@ function startGameOrchestratorAPI(game){
     var numRounds = settings['noOfRounds'];
     var timeRounds = settings['countdown'];
 
+    //Needs to be fixed next - currently calling back end not durable function - I think this issue was casued when the backend request function was added.
     backendRequest('POST', '/start_game_trigger', {
         body: { gameId: game, rounds: numRounds, time: timeRounds }
     }, function(err, response, body){

@@ -88,7 +88,7 @@ var app = new Vue({
         socket.emit('start', this.username)
        },
        joinLobby() {
-        socket.emit('join', this.code)
+        socket.emit('join', this.username, this.code)
        },
        toUpload() {
         socket.emit('toUpload');
@@ -141,7 +141,6 @@ var app = new Vue({
        },
        startMenu(state) {
         this.update(state);
-        //setTimeout(updateLeaderboard(),2000);
        },
        startLobby(state, code) {
         this.update(state);
@@ -191,6 +190,10 @@ var app = new Vue({
        update(state) {
         this.state = state;
         this.errorMessage = "";
+        if (state.state.gameState === 0) {
+            this.leaderboard = this.state.otherPlayers;
+            this.leaderboard.unshift(this.state.player);
+        }
        }
     }
 });
