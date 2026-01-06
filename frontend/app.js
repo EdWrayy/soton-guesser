@@ -26,10 +26,10 @@ app.get('/', (req, res) => {
 const BACKEND_ENDPOINT = process.env.BACKEND || 'http://localhost:8181';
 
 //Server state
-//Map of registered player username to player state
-let registeredPlayers = new Map();
-//list of logged in player usernames (subset of registered players)
-let loggedinPlayers = [];
+//List of registered player username
+let registeredPlayers = []
+//map of logged in player usernames (subset of registered players) to player state
+let loggedinPlayers = new Map();
 
 //Map of player usernames to player id
 let playerToId = new Map();
@@ -148,7 +148,7 @@ function updateClient(player){
 }
 //Get the game state
 function getState(player){
-    const playerState = registeredPlayers.get(player);
+    const playerState = loggedinPlayers.get(player);
     const game = playerToGame.get(player);
     const gameState = gameToState.get(game);
     const isAdmin = admins.includes(player);
@@ -165,7 +165,7 @@ function getState(player){
 //Adds the admin (given as parameter)
 function startSession(admin, apiResponse) {
     let lobbyCode = apiResponse['matchCode'];
-    let token = apiResponse['signalRToken'];
+    let signalR = apiResponse['signalR'];
     let matchSettings = apiResponse['matchSettings'];
 
     //let admin_state = {name : admin, current_score: 0};
@@ -181,7 +181,7 @@ function startSession(admin, apiResponse) {
     adminToGame.set(admin, lobbyCode);
     playerToGame.set(admin, lobbyCode);
 
-    playerToSignalR.set(admin, token);
+    playerToSignalR.set(admin, signalR);
     gameToSettings.set(lobbyCode, matchSettings);
 
     playerToState.set(admin, 2);
@@ -210,8 +210,8 @@ function joinSession(player, game, apiResponse) {
 }
 
 function register(socket, username, password){
-    let player_state = {name: username, currentScore: 0, guess: null};
-    registeredPlayers.set(player, player_state);
+    
+    registeredPlayers.push(player);
 
     playersToSockets.set(username, socket);
     socketsToPlayers.set(socket, username);
@@ -224,10 +224,13 @@ function login(socket, username, password, responseBody){
         error(socket, "This client is already logged in", false);
     }
     else{
+        let player_state = {name: username, currentScore: 0, guess: null};
         let userId = responseBody['userId'];
         playerToId.set(username, userId);
         idToPlayer.set(userId, username);
-        loggedinPlayers.push(username);
+        loggedinPlayers.set(username, player_state);
+        playersToSockets.set(username, socket);
+        socketsToPlayers.set(socket, username);
         playerToState.set(username, 1);
         socket.emit('menu', getState(username));
     }
@@ -271,8 +274,8 @@ function increaseScores(roundResults){
         var result = roundResults[i];
         var player = result['player_id'];
         var score = result['data'];
-        var playerState = registeredPlayers.get(player);
-        registeredPlayers.set(player, {name: playerState['name'], currentScore: (playerState['currentScore'] + score), guess: playerState['guess']});
+        var playerState = loggedinPlayers.get(player);
+        loggedinPlayers.set(player, {name: playerState['name'], currentScore: (playerState['currentScore'] + score), guess: playerState['guess']});
     }
 }
 
