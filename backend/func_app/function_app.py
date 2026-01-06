@@ -387,7 +387,6 @@ def get_place(req: func.HttpRequest) -> func.HttpResponse:
 @app.route(route="create_lobby", auth_level=func.AuthLevel.FUNCTION, methods=["POST"])
 @app.signalr_connection_info(
     arg_name="connection_info",
-    hub_name="test",
     user_id="{json:playerId}",
     connection_string_setting="AzureSignalRConnectionString"
 )
@@ -402,9 +401,7 @@ def create_lobby(req: func.HttpRequest, connection_info: dict) -> func.HttpRespo
     try:
         body = req.get_json()
         host_id = body['userId']
-
-        # maybe check if user exists?
-
+        
         # generate 6 character match code
         match_id = random.randint(0, 999999)
         match_id = f"{match_id:06d}"
@@ -423,6 +420,9 @@ def create_lobby(req: func.HttpRequest, connection_info: dict) -> func.HttpRespo
         doc = {"matchId": match_id, "players": [{"userId": host_id}], "matchSettings": default_match_settings}
         matches_container.create_item(doc)
 
+        # dynamically set hub_name
+        connection_info['hub_name'] = match_id
+
         # return response
         return _json({"result": True, "msg": "OK", "matchCode": match_id, "signalR": {
                     "url": connection_info["url"],
@@ -439,7 +439,6 @@ def create_lobby(req: func.HttpRequest, connection_info: dict) -> func.HttpRespo
 @app.route(route="join_game", auth_level=func.AuthLevel.FUNCTION, methods=["POST"])
 @app.signalr_connection_info(
     arg_name="connection_info",
-    hub_name="test",
     user_id="{json:playerId}",
     connection_string_setting="AzureSignalRConnectionString"
 )
@@ -473,6 +472,10 @@ def join_game(req: func.HttpRequest, connection_info: dict) -> func.HttpResponse
             # replace entry
             item["players"].append({"userId": player_id})
             matches_container.upsert_item(item)
+            
+            # dynamically set hub_name
+            connection_info['hub_name'] = match_id
+
             # return response
             return _json({"result": True, "msg": "OK", "signalR": {
                     "url": connection_info["url"],
