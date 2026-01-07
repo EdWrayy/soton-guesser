@@ -11,6 +11,7 @@ const request = require('request');
 
 //set up signalr
 const signalR = require('@microsoft/signalr');
+const e = require('express');
 
 
 //Setup static page handling
@@ -338,12 +339,14 @@ function createLobbyAPI(socket, username){
 function joinGameAPI(socket, username, game){
     var playerId = playerToId.get(username);
     backendRequest('POST', '/join_game', {
-        body: { lobbyCode: game, playerId: playerId }
+        body: { matchCode: game, playerId: playerId }
     }, function(err, response, body){
+        console.log(err);
         if (err){
             error(socket, "Something went wrong when contacting the backend", false);
             return;
         }
+        console.log(body);
         if(body && body['result']){
             joinSession(username, game, body);
         }
