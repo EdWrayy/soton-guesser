@@ -1,5 +1,13 @@
 {
   "version": "2.0",
+  "logging": {
+    "logLevel": {
+      "default": "Warning",
+      "Function.prepare_round": "Information",
+      "DurableTask": "Information"
+
+    }
+  },
   "extensions": {
     "durableTask": {
       "hubName": "test"

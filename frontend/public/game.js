@@ -36,6 +36,10 @@ var app = new Vue({
     },
     methods: {
        orderLeaderboard() {
+        if (!this.leaderboard || !Array.isArray(this.leaderboard)) {
+            console.warn("orderLeaderboard called with invalid leaderboard:", this.leaderboard);
+            return;
+        }
         this.leaderboard.sort(function(x,y) {
             if (x.currentScore < y.currentScore) {
                 return 1;
@@ -47,6 +51,8 @@ var app = new Vue({
         })
        },
        setLeaderboard(board) {
+        console.log("setting leaderboard:");
+        console.log(board);
         let newBoard = [];
         for(const element of board) {
             let score = 0;
@@ -170,7 +176,10 @@ var app = new Vue({
        },
        startAwnsers(state, playerScores) {
         this.update(state);
-        this.leaderboard = playerScores;
+        this.setLeaderboard(playerScores);
+        console.log("player scores:");
+        console.log(this.leaderboard);
+        console.log(state);
         this.orderLeaderboard();
         this.setBuildingImage();
         resetMap();
@@ -179,6 +188,8 @@ var app = new Vue({
         this.update(state);
         this.leaderboard = this.state.otherPlayers;
         this.leaderboard.push(this.state.player);
+        console.log("final scores:");
+        console.log(this.leaderboard);
         this.orderLeaderboard();
        },
        startUpload(state) {
@@ -258,7 +269,9 @@ function connect() {
     });
 
     socket.on('awnsers', function(state, playerScores) {
-        app.startAwnsers(state, playerScores)
+        console.log("starting awnsers");
+        console.log(playerScores);
+        app.startAwnsers(state, playerScores);
     });
 
     socket.on('scores', function(state) {

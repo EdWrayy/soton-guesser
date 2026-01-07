@@ -469,7 +469,7 @@ def create_lobby(req: func.HttpRequest, connectionInfo) -> func.HttpResponse:
         hub_name = match_id
 
         # add match to matches container
-        default_match_settings = {"noOfRounds":8, "maxPlayers":8, "countdown":60}
+        default_match_settings = {"noOfRounds":3, "maxPlayers":8, "countdown":60}
         doc = {"matchId": match_id, "players": [{"userId": host_id}], "matchSettings": default_match_settings}
         matches_container.create_item(doc, enable_automatic_id_generation = True)
 

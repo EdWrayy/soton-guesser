@@ -37,9 +37,19 @@ async def http_start(req: func.HttpRequest, client: df.DurableOrchestrationClien
     payload = req.get_json()
     game_id = payload.get("game_id")
     
-    instance_id = await client.start_new("game_orchestrator", None, payload)
+    # Normalize payload to accept game_id, gameId, or matchCode
+    if not game_id:
+        game_id = payload.get("gameId") or payload.get("matchCode")
+    if not game_id:
+        return func.HttpResponse("Missing game_id/gameId/matchCode", status_code=400)
     
-    logging.warning(f"Started orchestration with ID = '{instance_id}'.")
+    # Update payload with normalized game_id
+    payload["game_id"] = game_id
+    
+    # Use game_id as instance_id to prevent duplicate orchestrations
+    instance_id = await client.start_new("game_orchestrator", str(game_id), payload)
+    
+    logging.warning(f"Started orchestration with ID = '{instance_id}' for game_id={game_id}.")
     return client.create_check_status_response(req, instance_id)
 
 # ORCHESTRATOR
@@ -48,10 +58,10 @@ def game_orchestrator(context: df.DurableOrchestrationContext):
     input_data = context.get_input()
     game_id = input_data.get("game_id")
     logging.warning(f"game_orchestrator: Starting game_id={game_id}")
-    num_rounds = input_data.get("rounds", 5)
+    num_rounds = input_data.get("rounds", 3)
 
-    # for round_num in range(1, num_rounds + 1):
-    for round_num in range(1,2):
+    for round_num in range(1, num_rounds + 1):
+    
         round_setup = yield context.call_activity("prepare_round", {"game_id": game_id, "round": round_num})
         
         yield context.call_activity("signalr_broadcast", {
@@ -78,8 +88,10 @@ def game_orchestrator(context: df.DurableOrchestrationContext):
         })
         
         # Short pause between rounds
-        inter_round_timeout = context.current_utc_datetime + timedelta(seconds=30)
+        inter_round_timeout = context.current_utc_datetime + timedelta(seconds=10)
         yield context.create_timer(inter_round_timeout)
+        
+    yield context.call_activity("final_scores_to_cosmos", {"game_id": game_id})
 
     yield context.call_activity("signalr_broadcast", {
         "game_id": game_id,
@@ -102,22 +114,23 @@ def prepare_round(params: dict):
     game_id = params['game_id']
     round_num = params['round']
 
-    # Build query with a literal OFFSET to avoid SDK kwargs confusion
-    offset = random.randint(0, 50)
-    query = f"SELECT * FROM c OFFSET {offset} LIMIT 1"
-    logging.warning(f"prepare_round: game_id={game_id} round={round_num} selecting random place")
+    # Randomly pick any document from the container
+    total_items = list(places_col.query_items(
+        query="SELECT VALUE COUNT(1) FROM c",
+        enable_cross_partition_query=True,
+    ))
+    total_count = total_items[0] if total_items else 0
+    if total_count == 0:
+        logging.error("prepare_round: No places found in Cosmos container")
+        raise Exception("No places found in Cosmos container")
+
+    random_index = random.randint(0, total_count - 1)
+    query = f"SELECT * FROM c OFFSET {random_index} LIMIT 1"
+    logging.warning(f"prepare_round: game_id={game_id} round={round_num} selecting random place at index {random_index} of {total_count}")
     items = list(places_col.query_items(
         query=query,
         enable_cross_partition_query=True,
     ))
-    if not items:
-        items = list(places_col.query_items(
-            query="SELECT TOP 1 * FROM c",
-            enable_cross_partition_query=True,
-        ))
-        if not items:
-                logging.error("prepare_round: No places found in Cosmos container")
-                raise Exception("No places found in Cosmos container")
 
     place = items[0]
     logging.warning(f"prepare_round: selected place id={place.get('id')}")
@@ -192,6 +205,21 @@ def process_scores(game_id: str):
         except Exception:
             logging.exception(f"process_scores: failed to ZINCRBY '{scores_key}' for player_id={player_id}")
 
+    
+    
+    try:
+        r.delete(guesses_key)
+        logging.warning(f"process_scores: deleted Redis key '{guesses_key}'")
+    except Exception as e:
+        logging.warning(f"process_scores: could not delete Redis key '{guesses_key}': {e}")
+
+    logging.info("process_scores: completed")
+    return round_results
+
+@app.activity_trigger(input_name="payload")
+def final_scores_to_cosmos(payload: dict):
+    """
+    Store final scores in CosmosDB
     game_result_doc = {
         "id": f"{game_id}_{int(datetime.datetime.utcnow().timestamp())}",
         "game_id": game_id,
@@ -204,15 +232,44 @@ def process_scores(game_id: str):
     except Exception:
         logging.exception("process_scores: failed to upsert results to Cosmos")
         raise
+    """
+    game_id = payload['game_id']
+    
+    # Get scores from Redis
+    scores_key = f"match:{game_id}:scores"
+    if r is None:
+        logging.warning("final_scores_to_cosmos: Redis not configured; aborting")
+        raise Exception("Redis not configured")
+    try:
+        all_scores = r.zrevrange(scores_key, 0, -1, withscores=True)
+        logging.warning(f"final_scores_to_cosmos: fetched {len(all_scores)} final scores from Redis key '{scores_key}'")
+    except Exception as e:
+        logging.exception(f"final_scores_to_cosmos: failed to read final scores from Redis key '{scores_key}': {e}")
+        raise e
+    round_results = []
+    for player_id, score in all_scores:
+        round_results.append({
+            "player_id": player_id,
+            "score": int(score)
+        })
+    game_result_doc = {
+        "id": f"{game_id}_{int(datetime.datetime.utcnow().timestamp())}",
+        "game_id": game_id,
+        "final_scores": round_results,
+        "timestamp": str(datetime.datetime.utcnow())
+    }
+    logging.warning(f"final_scores_to_cosmos: upserting results to Cosmos. results_len={len(round_results)}")
     
     try:
-        r.delete(guesses_key)
-        logging.warning(f"process_scores: deleted Redis key '{guesses_key}'")
-    except Exception as e:
-        logging.warning(f"process_scores: could not delete Redis key '{guesses_key}': {e}")
-
-    logging.info("process_scores: completed")
-    return round_results
+        results_col.upsert_item(game_result_doc)
+        logging.warning("final_scores_to_cosmos: upserted results to Cosmos successfully")
+    except Exception:
+        logging.exception("final_scores_to_cosmos: failed to upsert results to Cosmos")
+        raise
+    
+    return
+    
+    
 
 @app.activity_trigger(input_name="payload")
 @app.generic_output_binding(arg_name="signalRMessages", type="signalR", hubName="test", connectionStringSetting="SignalRConnection")

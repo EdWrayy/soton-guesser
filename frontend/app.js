@@ -254,20 +254,42 @@ function startAnswers(game, roundResults){
     let players = gameToPlayers.get(game);
     gameToState.set(game, 2);
     increaseScores(roundResults);
+    var formatted_scores =[];
+    for (let i = 0; i < roundResults.length; i++){
+        var result = roundResults[i];
+        var playerId = result['player_id'];
+        var playerUsername = idToPlayer.get(playerId);
+        var score = result['data']['score'];
+        formatted_scores.push({"userId": playerId, "displayName": playerUsername, "score": score});
+    }
+    console.log("Starting answers phase for game " + game + " with results: " + JSON.stringify(roundResults));
     for (let i = 0; i < players.length; i++){
         var socket = playersToSockets.get(players[i]);
-        socket.emit("awnsers", getState(players[i]), roundResults);
+        socket.emit("awnsers", getState(players[i]), formatted_scores);
     }
 }
 
 function increaseScores(roundResults){
     for (let i = 0; i < roundResults.length; i++){
         var result = roundResults[i];
-        var player = result['player_id'];
-        var score = result['data'];
-        var playerState = loggedinPlayers.get(player);
-        loggedinPlayers.set(player, {name: playerState['name'], currentScore: (playerState['currentScore'] + score), guess: playerState['guess']});
+        var playerId = result['player_id'];
+        var playerUsername = idToPlayer.get(playerId);
+        var score = result['data']['score'];
+        var playerState = loggedinPlayers.get(playerUsername);
+        console.log("Result:", result);
+        console.log("Player ID:", playerId, "Username:", playerUsername);
+        console.log("Player state before score increase:", JSON.stringify(playerState));
+        console.log("Adding score:", score);
+        
+        if (!playerState) {
+            console.error("Could not find player state for player ID:", playerId, "Username:", playerUsername);
+            continue;
+        }
+        
+        loggedinPlayers.set(playerUsername, {name: playerState['name'], currentScore: (playerState['currentScore'] + score), guess: playerState['guess']});
+        console.log("Increased score for player " + playerUsername + " by " + score + ". New score: " + (playerState['currentScore'] + score));
     }
+
 }
 
 function concludeGame(game){
@@ -595,11 +617,13 @@ function startGameOrchestratorAPI(game){
                 console.log("Received update leaderboard signal from orchestrator");
                 console.log(data);
                 var game = orchestratorToGame.get(connectionToOrchestrator.get(connection));
-                var roundResults = data[0];
+                var roundResults = data;
                 startAnswers(game, roundResults);
             });
 
             connection.on("gameOver", (data) => {
+                console.log("Received game over signal from orchestrator");
+                console.log(data);
                 var game = orchestratorToGame.get(connectionToOrchestrator.get(connection));
                 resultsAPI(game);
             });
