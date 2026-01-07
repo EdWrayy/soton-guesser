@@ -65,7 +65,7 @@ def process_guess_queue(msg: func.ServiceBusMessage):
         return
     
     distance = calculate_distance(player_lat, player_lon, ans_data['lat'], ans_data['lon'])
-    score = max(0, 5000 - int(distance))
+    score = max(0, 5000 - int(distance)*500)
     logging.info(f"process_guess_queue: calculated distance={round(distance, 2)}km, score={score}")
 
     guess_entry = {
