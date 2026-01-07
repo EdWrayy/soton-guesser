@@ -48,12 +48,23 @@ var app = new Vue({
        setLeaderboard(board) {
         let newBoard = [];
         for(const element of board) {
+            let score = 0;
+            let name = "";
             if(element.hasOwnProperty("currentScore")) {
-                newBoard.push(element);
+                score = element.currentScore;
             }
             else if(element.hasOwnProperty("score")) {
-                newBoard.push({name: element.name, currentScore: element.score});
+                score = element.score;
             }
+
+            if(element.hasOwnProperty("name")) {
+                name = element.name;
+            }
+            else if(element.hasOwnProperty("displayName")) {
+                name = element.displayName;
+            }
+
+            newBoard.push({name: name, currentScore: score});
         }
         this.leaderboard = newBoard;
         this.orderLeaderboard();
