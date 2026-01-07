@@ -26,18 +26,19 @@ app.get('/', (req, res) => {
 //URL of backend API
 const BACKEND_ENDPOINT = process.env.BACKEND || 'https://southampton-guesser-functions-awdkf4e5crf8b8bd.francecentral-01.azurewebsites.net';
 const BACKEND_KEY = process.env.BACKEND_KEY || 'pIDE43MBnBZXsvp6vtqjzhmZO_viKFDHuhxtTKfD4FqjAzFu7M5e8g==';
-const DURABLE_FUNCTIONS_ENDPOINT = process.env.DURABLE_FUNCTIONS_ENDPOINT || 'http://localhost:7071/api/';
+const DURABLE_FUNCTIONS_ENDPOINT = process.env.DURABLE_FUNCTIONS_ENDPOINT || 'http://localhost:7071/api';
+const DURABLE_FUNCTIONS_KEY = process.env.DURABLE_FUNCTIONS_KEY || 'YOUR_DURABLE_FUNCTIONS_KEY_HERE';
 const SIGNALR_ENDPOINT = process.env.SIGNALR_ENDPOINT || 'http://localhost:7071/api/';
 
 // ---- Helper: always include function key in headers ----
-function backendRequest(method, path, options = {}, cb) {
-    const url = `${BACKEND_ENDPOINT}${path}`;
+function backendRequest(method, path, options = {}, cb, endpoint = BACKEND_ENDPOINT, key = BACKEND_KEY) {
+    const url = `${endpoint}${path}`;
     const reqOptions = {
         url,
         method,
         json: true,
         headers: {
-            'x-functions-key': BACKEND_KEY,
+            'x-functions-key': key,
             ...(options.headers || {}),
         },
         ...options,
@@ -90,6 +91,7 @@ function startServer() {
 function advance(game) {
     let state = gameToState.get(game);
     if (state == 0){
+        console.log("Starting game orchestrator for game " + game);
         startGameOrchestratorAPI(game);
         updateAll(game);
     }
@@ -513,6 +515,8 @@ function startGameOrchestratorAPI(game){
     var settings = gameToSettings.get(game);
     var numRounds = settings['noOfRounds'];
     var timeRounds = settings['countdown'];
+    console.log("Starting orchestrator for game " + game + " with " + numRounds + " rounds of " + timeRounds + " seconds each");
+
 
     //Needs to be fixed next - currently calling back end not durable function - I think this issue was casued when the backend request function was added.
     backendRequest('POST', '/start_game_trigger', {
@@ -522,17 +526,43 @@ function startGameOrchestratorAPI(game){
             console.log("Error starting orchestrator:", err);
             return;
         }
+        console.log(body);
+        console.log("Orchestrator start response code:", response.statusCode);
         if (response.statusCode == 202){
-            var orchestratorId = body['Id'];
+            var orchestratorId = body['id'];
+            console.log("Orchestrator started with response id " + orchestratorId);
             gameToOrchestrator.set(game, body);
             orchestratorToGame.set(orchestratorId, game);
-            orchestratorToSignalURL.set(orchestratorId, "This is where the URL will go");
+            var signalRStuff = playerToSignalR.get(gameToAdmin.get(game));
+            console.log("Orchestrator started with id " + orchestratorId);
+            console.log("SignalR connection info:", JSON.stringify(signalRStuff));
+            
+            if (!signalRStuff || !signalRStuff['url']) {
+                console.log("ERROR: No SignalR connection info available for game " + game);
+                return;
+            }
+            
+            var signalRUrl = signalRStuff['url'];
+            var accessToken = signalRStuff['accessToken'];
+            orchestratorToSignalURL.set(orchestratorId, signalRUrl);
+            console.log("Setting up SignalR connection to " + signalRUrl);
+
 
             const connection = new signalR.HubConnectionBuilder()
-                .withUrl(orchestratorToSignalURL.get(orchestratorId))
+                  .withUrl(signalRUrl, {
+                    accessTokenFactory: () => accessToken,
+                    transport: signalR.HttpTransportType.WebSockets,
+                    skipNegotiation: true
+                })
+                .withAutomaticReconnect()
+                .configureLogging(signalR.LogLevel.Information)
                 .build();
 
+
+
             connection.on("newRound", (data) => {
+                console.log("Received new round signal from orchestrator");
+                console.log(data);
                 var locationId = data[1];
                 var gameId = orchestratorToGame.get(connectionToOrchestrator.get(connection));
                 getLocationAPI(locationId, (err, location) => {
@@ -544,7 +574,9 @@ function startGameOrchestratorAPI(game){
                 });
             });
 
-            connection.on("endRound", (data) => {
+            connection.on("roundEnded", (data) => {
+                console.log("Received end round signal from orchestrator");
+                console.log(data);
                 var game = orchestratorToGame.get(connectionToOrchestrator.get(connection));
                 var players = gameToPlayers.get(game);
                 for (let i = 0; i < players.length; i++){
@@ -564,10 +596,26 @@ function startGameOrchestratorAPI(game){
                 resultsAPI(game);
             });
 
+            async function start() {
+            try {
+                await connection.start();
+                console.log("Connected to SignalR hub");
+
+                // Call server method
+                // await connection.invoke("SendMessage", "node-client", "Hello from Node.js");
+            } catch (err) {
+                console.error("Connection failed:", err);
+                setTimeout(start, 5000);
+            }
+            }
             orchestratorToConnection.set(orchestratorId, connection);
             connectionToOrchestrator.set(connection, orchestratorId);
+
+            start();
         }
-    });
+    },
+    DURABLE_FUNCTIONS_ENDPOINT,
+    DURABLE_FUNCTIONS_KEY);
 }
 
 //Handle new connection
