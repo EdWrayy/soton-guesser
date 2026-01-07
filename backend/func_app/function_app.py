@@ -8,12 +8,19 @@ import uuid
 import bcrypt
 import base64
 import binascii
+import time
+import hmac
+import hashlib
 from typing import Any, Dict, Optional
 from azure.storage.blob import BlobServiceClient, ContentSettings
 from azure.cosmos import exceptions
 
 from azure.cosmos import CosmosClient, exceptions
 from azure.servicebus import ServiceBusClient, ServiceBusMessage
+
+from azure.storage.blob import generate_blob_sas, BlobSasPermissions
+from datetime import timedelta
+from urllib.parse import urlparse
 
 app = func.FunctionApp()
 
@@ -38,6 +45,10 @@ leaderboard_container = db.get_container_client(LEADERBOARD)
 matches_container = db.get_container_client(MATCHES)
 places_container = db.get_container_client(PLACES)
 results_container = db.get_container_client(RESULTS)
+
+signalR_connection_string = os.environ["AZURE_SIGNALR_CONNECTION_STRING"]
+signalr_endpoint = os.environ["SIGNALR_ENDPOINT"]
+signalr_access_key = os.environ["SIGNALR_KEY"]
 
 
 # ---- Blob init ---- 
@@ -112,6 +123,29 @@ def _enqueue_guess(game_id:str, player_id: str, lat: float, lon: float):
                     content_type="application/json"
                 )
             )
+
+# Generate signalR tokens manually since only static hubnames are allowed when uing bindings
+def _generate_signalr_token(user_id: str, hub_name: str):
+
+    audience = f"{signalr_endpoint}/client/?hub={hub_name}"
+    expiry = int(time.time()) + 3600
+
+    token = {
+        "aud": audience,
+        "exp": expiry,
+        "sub": user_id
+    }
+
+    token_bytes = json.dumps(token, separators=(",", ":")).encode("utf-8")
+    key_bytes = base64.b64decode(signalr_access_key)
+
+    signature = hmac.new(key_bytes, token_bytes, hashlib.sha256).digest()
+    jwt = base64.urlsafe_b64encode(token_bytes + b"." + signature).decode().rstrip("=")
+
+    return {
+        "url": signalr_endpoint,
+        "accessToken": jwt
+    }
 
 @app.route(route="register", auth_level=func.AuthLevel.FUNCTION, methods=["POST"])
 def register(req: func.HttpRequest) -> func.HttpResponse:
@@ -352,46 +386,75 @@ def create_place(req: func.HttpRequest) -> func.HttpResponse:
         logging.exception("Error in create_place")
         return _json({"result": False, "msg": str(e)}, 500)
     
+
+def _storage_account_name_and_key() -> tuple[str, str]:
+    # Parses "DefaultEndpointsProtocol=...;AccountName=...;AccountKey=...;EndpointSuffix=..."
+    parts = dict(
+        item.split("=", 1) for item in AZURE_STORAGE_CONNECTION_STRING.split(";") if "=" in item
+    )
+    return parts["AccountName"], parts["AccountKey"]
+
+def _blob_url_with_sas(container: str, blob_name: str, minutes: int = 5) -> str:
+    account_name, account_key = _storage_account_name_and_key()
+
+    sas = generate_blob_sas(
+        account_name=account_name,
+        container_name=container,
+        blob_name=blob_name,
+        account_key=account_key,
+        permission=BlobSasPermissions(read=True),
+        expiry=datetime.datetime.now(datetime.timezone.utc) + timedelta(minutes=minutes)
+    )
+
+    return f"https://{account_name}.blob.core.windows.net/{container}/{blob_name}?{sas}"
+
+    
 @app.route(route="get_place", auth_level=func.AuthLevel.FUNCTION, methods=["GET"])
 def get_place(req: func.HttpRequest) -> func.HttpResponse:
-    # GET /get_place
+    """
+    GET /get_place
 
-    # Expects:
-    # {id: "id"}
+    Query:
+    - id: string (place UUID)
 
-    # returns:
-    # place : {
-    #         "id": place_id,
-    #         "name": name,
-    #         "location": {"lat": lat, "lon": lon},
-    #         "blob": {"container": BLOB_CONTAINER_NAME, "name": blob_name, "url": blob_url},
-    #         "createdAt": _now_z(),
-    # }
-    
+    Returns:
+    - place object including a short-lived SAS URL for the image
+    """
     try:
-        id = req.params.get("id")
-        query = f"SELECT * FROM places p WHERE p.id = {id}"
+        place_id = req.params.get("id")
+        if not place_id:
+            return _json({"result": False, "msg": "Missing param: id"}, 400)
 
-        place = list(places_container.query_items(query=query, enable_cross_partition_query=True))[0]
+        # Parameterised query
+        query = "SELECT TOP 1 * FROM p WHERE p.id = @id"
+        params = [{"name": "@id", "value": place_id}]
+        items = list(places_container.query_items(
+            query=query,
+            parameters=params,
+            enable_cross_partition_query=True
+        ))
+        if not items:
+            return _json({"result": False, "msg": "Place not found"}, 404)
+
+        place = items[0]
+
+        container = place["blob"]["container"]
+        blob_name = place["blob"]["name"]
+
+        place["blob"]["url"] = _blob_url_with_sas(container, blob_name, minutes=5)
+
         return _json({"result": True, "msg": "OK", "place": place}, 200)
-    
+
     except Exception as e:
         logging.exception("Error in get_place")
         return _json({"result": False, "msg": str(e)}, 500)
 
 
-    
-# Start game
-# Initialises a lobby for the game
-# Returns a game ID and signal R access token
+## Start game
+## Initialises a lobby for the game
+## Returns a game ID and signal R access token
 @app.route(route="create_lobby", auth_level=func.AuthLevel.FUNCTION, methods=["POST"])
-@app.signalr_connection_info(
-    arg_name="connection_info",
-    hub_name="test",
-    user_id="{json:playerId}",
-    connection_string_setting="AzureSignalRConnectionString"
-)
-def create_lobby(req: func.HttpRequest, connection_info: dict) -> func.HttpResponse:
+def create_lobby(req: func.HttpRequest) -> func.HttpResponse:
     # Expects:
     # {userId: "id"}
 
@@ -402,32 +465,41 @@ def create_lobby(req: func.HttpRequest, connection_info: dict) -> func.HttpRespo
     try:
         body = req.get_json()
         host_id = body['userId']
-
-        # maybe check if user exists?
-
+        
         # generate 6 character match code
         match_id = random.randint(0, 999999)
         match_id = f"{match_id:06d}"
 
-        # check if a code already exists within the matches container
-        query = "SELECT m.matchId FROM matches m"
+        # Check if a code already exists within the matches container
+        query = "SELECT VALUE COUNT(1) FROM matches m WHERE m.matchId = @matchId"
+        items = list(matches_container.query_items(
+            query=query,
+            parameters=[{"name": "@matchId", "value": match_id}],
+            enable_cross_partition_query=True
+        ))
 
-        codes = list(matches_container.query_items(query=query, enable_cross_partition_query=True))
-
-        while match_id in codes:
+        # If matchId already exists, regenerate
+        while items[0] > 0:
+            # generate 6 character match code
             match_id = random.randint(0, 999999)
             match_id = f"{match_id:06d}"
+
+            items = list(matches_container.query_items(
+                query=query,
+                parameters=[{"name": "@matchId", "value": match_id}],
+                enable_cross_partition_query=True
+            ))
+
+        hub_name = match_id
+        signalR_connection = _generate_signalr_token(host_id, hub_name)
 
         # add match to matches container
         default_match_settings = {"noOfRounds":8, "maxPlayers":8, "countdown":60}
         doc = {"matchId": match_id, "players": [{"userId": host_id}], "matchSettings": default_match_settings}
-        matches_container.create_item(doc)
+        matches_container.create_item(doc, enable_automatic_id_generation = True)
 
         # return response
-        return _json({"result": True, "msg": "OK", "matchCode": match_id, "signalR": {
-                    "url": connection_info["url"],
-                    "accessToken": connection_info["accessToken"]
-                }, "matchSettings": default_match_settings}, 201)
+        return _json({"result": True, "msg": "OK", "matchCode": match_id, "signalR": signalR_connection, "matchSettings": default_match_settings}, 200)
     
     except Exception as e:
         logging.exception("Error in create_lobby")
@@ -437,13 +509,7 @@ def create_lobby(req: func.HttpRequest, connection_info: dict) -> func.HttpRespo
 # Adds player to the lobby
 # Returns signal R access token
 @app.route(route="join_game", auth_level=func.AuthLevel.FUNCTION, methods=["POST"])
-@app.signalr_connection_info(
-    arg_name="connection_info",
-    hub_name="test",
-    user_id="{json:playerId}",
-    connection_string_setting="AzureSignalRConnectionString"
-)
-def join_game(req: func.HttpRequest, connection_info: dict) -> func.HttpResponse:
+def join_game(req: func.HttpRequest) -> func.HttpResponse:
     # Expects:
     # {matchCode: str, playerId: str}
 
@@ -456,11 +522,20 @@ def join_game(req: func.HttpRequest, connection_info: dict) -> func.HttpResponse
         player_id = body['playerId']
 
         # fetch current lobby state
-        query = f"SELECT * FROM matches m WHERE m.matchId = {match_id}"
-        item = list(matches_container.query_items(query=query, enable_cross_partition_query=True))[0]
+        query = "SELECT * FROM matches m WHERE m.matchId = @matchId"
+        items = list(matches_container.query_items(
+            query=query,
+            parameters=[{"name": "@matchId", "value": match_id}],
+            enable_cross_partition_query=True
+        ))
+
+        if not items:
+            return _json({"result": False, "msg": "Match not found"}, 404)
+
+        item = items[0]
+        players = item.get("players", [])
 
         max_players = item["matchSettings"]["maxPlayers"]
-        players = item["players"]
 
         player_in_lobby = any(player["userId"] == player_id for player in players)
         lobby_count_exceeded = len(players) >= max_players
@@ -470,14 +545,17 @@ def join_game(req: func.HttpRequest, connection_info: dict) -> func.HttpResponse
         elif (lobby_count_exceeded):
             return _json({"result": False, "msg": "Lobby is full"}, 409)
         else:
+            hub_name = match_id
+
             # replace entry
             item["players"].append({"userId": player_id})
             matches_container.upsert_item(item)
+            
+            signalR_connection = _generate_signalr_token(player_id, hub_name)
+
             # return response
-            return _json({"result": True, "msg": "OK", "signalR": {
-                    "url": connection_info["url"],
-                    "accessToken": connection_info["accessToken"]
-                }}, 201)
+            return _json({"result": True, "msg": "OK", "matchCode": match_id, "signalR": signalR_connection}, 200)
+    
 
     except Exception as e:
         logging.exception("Error in join_game")
@@ -497,8 +575,13 @@ def quit_game(req: func.HttpRequest) -> func.HttpResponse:
         player_id = body['playerId']
 
         # fetch current lobby state
-        query = f"SELECT * FROM matches m WHERE m.matchId = {match_id}"
-        item = list(matches_container.query_items(query=query, enable_cross_partition_query=True))[0]
+        query = "SELECT * FROM matches m WHERE m.matchId = @matchId"
+        params = [{"name": "@matchId", "value": match_id}]
+        items = list(matches_container.query_items(query=query, parameters=params, enable_cross_partition_query=True))[0]
+
+        if not items:
+            return _json({"result": False, "msg": "Lobby not found"}, 404)
+        item = items[0]
 
         players = item["players"]
 
@@ -525,7 +608,7 @@ def quit_game(req: func.HttpRequest) -> func.HttpResponse:
 
 # Change settings
 # Takes new settings and changes it in the database
-@app.settings(route="change_settings", auth_level=func.AuthLevel.FUNCTION, methods=["PUT"])
+@app.route(route="change_settings", auth_level=func.AuthLevel.FUNCTION, methods=["PUT"])
 def settings(req: func.HttpRequest) -> func.HttpResponse:
     # expects: {matchCode: code, matchSettings:{noOfRounds:int, maxPlayers:int, countdown:int}}
     
@@ -535,9 +618,12 @@ def settings(req: func.HttpRequest) -> func.HttpResponse:
         match_settings = body["matchSettings"]
 
         # fetch current lobby state
-        query = f"SELECT * FROM matches m WHERE m.matchId = {match_id}"
-        item = list(matches_container.query_items(query=query, enable_cross_partition_query=True))[0]
-
+        query = "SELECT * FROM matches m WHERE m.matchId = @matchId"
+        params = [{"name": "@matchId", "value": match_id}]
+        items = list(matches_container.query_items(query=query, parameters=params, enable_cross_partition_query=True))
+        if not items:
+            return _json({"result": False, "msg": "Lobby not found"}, 404)
+        item = items[0]
         
         # update entry
         item["matchSettings"] = match_settings
@@ -598,15 +684,25 @@ def results(req: func.HttpRequest) -> func.HttpResponse:
         match_id = body['matchCode']
 
         # Remove entry from matches container
-        query = f"SELECT * FROM matches m WHERE m.matchId = {match_id}"
-        item = list(matches_container.query_items(query=query, enable_cross_partition_query=True))[0]
+        query = "SELECT * FROM matches m WHERE m.matchId = @matchId"
+        params = [{"name": "@matchId", "value": match_id}]
+        items = list(matches_container.query_items(query=query, parameters=params, enable_cross_partition_query=True))
+
+        if not items:
+            return _json({"result": False, "msg": "Match not found"}, 404)
+        item = items[0]
 
         matches_container.delete_item(item=item, partition_key=item["partitionKey"])
 
         # get match results
 
-        query = f"SELECT * FROM Results r WHERE r.game_id = {match_id}"
-        item = list(results_container.query_items(query=query, enable_cross_partition_query=True))[0]
+        query = f"SELECT * FROM Results r WHERE r.game_id = @game_id"
+        params = [{"name": "@game_id", "value": match_id}]
+        items = list(results_container.query_items(query=query, enable_cross_partition_query=True))
+
+        if not items:
+            return _json({"result": False, "msg": "Result not found"}, 404)
+        item = items[0]
 
         player_scores = item["round_scores"]
 
@@ -629,7 +725,13 @@ def results(req: func.HttpRequest) -> func.HttpResponse:
 
         return _json({"result": True, "msg": "OK", "playerScores": player_scores}, 200)
 
+    except KeyError as e:
+        logging.exception("Missing key in response data")
+        return _json({"result": False, "msg": f"Missing key: {str(e)}"}, 400)
+    except IndexError as e:
+        logging.exception("Item not found in the container")
+        return _json({"result": False, "msg": "Item not found"}, 404)
     except Exception as e:
-        logging.exception("Error in results")
+        logging.exception("Error processing results")
         return _json({"result": False, "msg": str(e)}, 500)
 
