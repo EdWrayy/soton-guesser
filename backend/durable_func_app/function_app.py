@@ -91,7 +91,7 @@ def game_orchestrator(context: df.DurableOrchestrationContext):
         inter_round_timeout = context.current_utc_datetime + timedelta(seconds=10)
         yield context.create_timer(inter_round_timeout)
         
-    yield context.call_activity("final_scores_to_cosmos", {"game_id": game_id})
+    # yield context.call_activity("final_scores_to_cosmos", {"game_id": game_id})
 
     yield context.call_activity("signalr_broadcast", {
         "game_id": game_id,
@@ -205,7 +205,18 @@ def process_scores(game_id: str):
         except Exception:
             logging.exception(f"process_scores: failed to ZINCRBY '{scores_key}' for player_id={player_id}")
 
-    
+    game_result_doc = {
+        "id": f"{game_id}_{int(datetime.datetime.utcnow().timestamp())}",
+        "game_id": game_id,
+        "round_scores": round_results,
+        "timestamp": str(datetime.datetime.utcnow())
+    }
+    logging.warning(f"process_scores: upserting results to Cosmos. results_len={len(round_results)}")
+    try:
+        results_col.upsert_item(game_result_doc)
+    except Exception:
+        logging.exception("process_scores: failed to upsert results to Cosmos")
+        raise
     
     try:
         r.delete(guesses_key)
