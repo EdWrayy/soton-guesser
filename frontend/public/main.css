@@ -9,6 +9,11 @@ body {
   z-index: 1000;
 }
 
+.menu {
+  display: grid;
+  grid-template-columns: 50% 50%;
+}
+
 #map {
   width: 300px !important;
   height: 300px !important;

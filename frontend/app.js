@@ -617,6 +617,10 @@ io.on('connection', socket => {
         var game = playerToGame.get(player);
         advance(game);
     });
+
+    socket.on('disconnect', () => {
+        loggedinPlayers.delete(socketsToPlayers.get(socket));
+    });
 });
 
 //Start server
