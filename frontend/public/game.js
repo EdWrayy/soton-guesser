@@ -19,8 +19,11 @@ var app = new Vue({
         username: "",
         password: "",
         confirmPassword: "",
+        showPassword: false,
+        showConfirmPassword: false,
         code: "",
         errorMessage: "",
+        infoMessage: "",
         awnsered: false,
         mapMarkers: [],
         file: null,
@@ -80,21 +83,36 @@ var app = new Vue({
         this.errorMessage = message;
         setTimeout(() => {this.errorMessage = "";}, 5000);
        },
+       info(message) {
+        this.infoMessage = message;
+        setTimeout(() => {this.infoMessage = "";}, 5000);
+       },
        login() {
         socket.emit('login', this.username,this.password);
         this.password = "";
+        this.showPassword = false;
        },
        register() {
         if (this.password == this.confirmPassword) {
             socket.emit('register', this.username,this.password);
             this.password = "";
             this.confirmPassword = "";
+            this.showPassword = false;
+            this.showConfirmPassword = false;
         }
         else {
             this.error("Entered passwords aren't the same");
             this.password = "";
             this.confirmPassword = "";
+            this.showPassword = false;
+            this.showConfirmPassword = false;
         }
+       },
+       togglePassword() {
+        this.showPassword = !this.showPassword;
+       },
+       toggleConfirmPassword() {
+        this.showConfirmPassword = !this.showConfirmPassword;
        },
        startRegister() {
         this.registering = true;
@@ -172,10 +190,12 @@ var app = new Vue({
         this.location = location;
         this.setBuildingImage();
         resetMap();
+        stopTimer();
         startTimer(time);
        },
        startAwnsers(state, playerScores) {
         this.update(state);
+        stopTimer();
         this.setLeaderboard(playerScores);
         console.log("player scores:");
         console.log(this.leaderboard);
@@ -186,11 +206,17 @@ var app = new Vue({
        },
        startScores(state) {
         this.update(state);
+        stopTimer();
         this.leaderboard = this.state.otherPlayers;
         this.leaderboard.push(this.state.player);
         console.log("final scores:");
         console.log(this.leaderboard);
         this.orderLeaderboard();
+       },
+       nextRound() {
+        if (this.state.isAdmin) {
+            socket.emit('nextRound');
+        }
        },
        startUpload(state) {
         this.update(state);
@@ -206,8 +232,10 @@ var app = new Vue({
         else {setTimeout(this.setBuildingImage, 1000);}
        },
        awnser() {
+        if (this.awnsered) { return; }
         if (this.state.player.guess != null) {
             this.awnsered = true;
+            this.info("Guess submitted. Waiting for the round to end.");
             socket.emit("guess", this.state.player.guess);
             console.log(this.state.player.guess);
         }
@@ -290,6 +318,16 @@ function connect() {
     socket.on('fail', function(message) {
         app.error(message);
     });
+    
+    socket.on('notice', function(message) {
+        app.info(message);
+    });
+
+    socket.on('roundEnd', function() {
+        app.info("Time is up. Calculating scores...");
+        stopTimer();
+        app.timerText = "TIME'S UP!";
+    });
 
     //Handle disconnection
     socket.on('disconnect', function() {
@@ -327,10 +365,16 @@ function resetMap() {
 function initMap() {
     if (document.getElementById('map') != null) {
         let soton = {lat: 50.923406, lng: -1.401113}
+        let center = soton;
+        let zoom = 12;
+        if (app.location != null && app.state.state.gameState == 2) {
+            center = {lat: app.location.location.lat, lng: app.location.location.lon};
+            zoom = 15;
+        }
         map = new google.maps.Map(
             document.getElementById('map'), {
-                zoom: 12,
-                center: soton,
+                zoom: zoom,
+                center: center,
                 mapId: "MAP_ID",
                 streetViewControl: false,
                 mapTypeControl: false,
@@ -391,8 +435,16 @@ function initMap() {
 
 //timer functions
 function startTimer(time) {
+    stopTimer();
     app.guessTime = time;
     timerId = setInterval(timeDecrement, 1000);
+}
+
+function stopTimer() {
+    if (timerId != null) {
+        clearInterval(timerId);
+        timerId = null;
+    }
 }
 
 function timeDecrement() {

@@ -1,9 +1,15 @@
 <!doctype html>
 <html lang="en">
     <input type="text" v-model="username" class="form-control" placeholder="Username">
-    <input type="text" v-model="password" class="form-control" placeholder="Password">
+    <div>
+        <input :type="showPassword ? 'text' : 'password'" v-model="password" class="form-control" placeholder="Password">
+        <button type="button" class="btn btn-sm btn-secondary" @click="togglePassword">{{ showPassword ? 'Hide' : 'Show' }}</button>
+    </div>
     <div v-if="registering">
-        <input type="text" v-model="confirmPassword" class="form-control" placeholder="Confirm Password">
+        <div>
+            <input :type="showConfirmPassword ? 'text' : 'password'" v-model="confirmPassword" class="form-control" placeholder="Confirm Password">
+            <button type="button" class="btn btn-sm btn-secondary" @click="toggleConfirmPassword">{{ showConfirmPassword ? 'Hide' : 'Show' }}</button>
+        </div>
         <button class="btn btn-lg btn-primary" @click="register">Register</button>
         <p>Already got an account?</p>
         <button class="btn btn-lg btn-primary" @click="stopRegister">Login here!</button>
