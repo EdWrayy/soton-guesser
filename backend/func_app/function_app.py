@@ -428,7 +428,8 @@ def get_place(req: func.HttpRequest) -> func.HttpResponse:
 ## Initialises a lobby for the game
 ## Returns a game ID and signal R access token
 @app.route(route="create_lobby", auth_level=func.AuthLevel.FUNCTION, methods=["POST"])
-def create_lobby(req: func.HttpRequest) -> func.HttpResponse:
+@app.generic_input_binding(arg_name="connectionInfo", type="signalRConnectionInfo", hubName="test", connectionStringSetting="AZURE_SIGNALR_CONNECTION_STRING")
+def create_lobby(req: func.HttpRequest, connectionInfo) -> func.HttpResponse:
     # Expects:
     # {userId: "id"}
 
@@ -444,42 +445,42 @@ def create_lobby(req: func.HttpRequest) -> func.HttpResponse:
         match_id = random.randint(0, 999999)
         match_id = f"{match_id:06d}"
 
-        # check if a code already exists within the matches container
-        query = "SELECT m.matchId FROM matches m"
+        # Check if a code already exists within the matches container
+        query = "SELECT VALUE COUNT(1) FROM matches m WHERE m.matchId = @matchId"
+        items = list(matches_container.query_items(
+            query=query,
+            parameters=[{"name": "@matchId", "value": match_id}],
+            enable_cross_partition_query=True
+        ))
 
-        codes = list(matches_container.query_items(query=query, enable_cross_partition_query=True))
-
-        while match_id in codes:
+        # If matchId already exists, regenerate
+        while items[0] > 0:
+            # generate 6 character match code
             match_id = random.randint(0, 999999)
             match_id = f"{match_id:06d}"
+
+            items = list(matches_container.query_items(
+                query=query,
+                parameters=[{"name": "@matchId", "value": match_id}],
+                enable_cross_partition_query=True
+            ))
+
+        hub_name = match_id
 
         # add match to matches container
         default_match_settings = {"noOfRounds":8, "maxPlayers":8, "countdown":60}
         doc = {"matchId": match_id, "players": [{"userId": host_id}], "matchSettings": default_match_settings}
-        matches_container.create_item(doc)
+        matches_container.create_item(doc, enable_automatic_id_generation = True)
 
-        hub_name = match_id
+        parsed_connection_info = json.loads(connectionInfo)
+        connection_url = parsed_connection_info["url"]
+        connection_token = parsed_connection_info["accessToken"]
 
-        # REST API to get the connection info (SignalR REST API)
-        url = f"{signalr_endpoint}/api/v1/hubs/{hub_name}/connectionInfo"
-
-        headers = {
-            'Content-Type': 'application/json',
-            'Authorization': f'Bearer {signalR_connection_string}'
-        }
-
-        response = requests.post(url, headers=headers, json={
-            "userId": host_id
-        })
-
-        if response.status_code != 200:
-            return _json({"result": False, "msg": response.text}, response.status_code)
-        connection_info = response.json()
         # return response
         return _json({"result": True, "msg": "OK", "matchCode": match_id, "signalR": {
-                    "url": connection_info["url"],
-                    "accessToken": connection_info["accessToken"]
-                }, "matchSettings": default_match_settings}, 201)
+                    "url": connection_url,
+                    "accessToken": connection_token
+                }, "matchSettings": default_match_settings}, 200)
     
     except Exception as e:
         logging.exception("Error in create_lobby")
@@ -489,8 +490,8 @@ def create_lobby(req: func.HttpRequest) -> func.HttpResponse:
 # Adds player to the lobby
 # Returns signal R access token
 @app.route(route="join_game", auth_level=func.AuthLevel.FUNCTION, methods=["POST"])
-
-def join_game(req: func.HttpRequest) -> func.HttpResponse:
+@app.generic_input_binding(arg_name="connectionInfo", type="signalRConnectionInfo", hubName="test", connectionStringSetting="AZURE_SIGNALR_CONNECTION_STRING")
+def join_game(req: func.HttpRequest, connectionInfo) -> func.HttpResponse:
     # Expects:
     # {matchCode: str, playerId: str}
 
@@ -528,31 +529,21 @@ def join_game(req: func.HttpRequest) -> func.HttpResponse:
         else:
             hub_name = match_id
 
-            # REST API to get the connection info (SignalR REST API)
-            url = f"{signalr_endpoint}/api/v1/hubs/{hub_name}/connectionInfo"
 
-            headers = {
-                'Content-Type': 'application/json',
-                'Authorization': f'Bearer {signalR_connection_string}'
-            }
-
-            response = requests.post(url, headers=headers, json={
-                "userId": player_id
-            })
-
-            if response.status_code != 200:
-                return _json({"result": False, "msg": response.text}, response.status_code)
-            connection_info = response.json()
-            
             # replace entry
             item["players"].append({"userId": player_id})
             matches_container.upsert_item(item)
             
+            parsed_connection_info = json.loads(connectionInfo)
+            connection_url = parsed_connection_info["url"]
+            connection_token = parsed_connection_info["accessToken"]
+
             # return response
-            return _json({"result": True, "msg": "OK", "signalR": {
-                    "url": connection_info["url"],
-                    "accessToken": connection_info["accessToken"]
-                }}, 201)
+            return _json({"result": True, "msg": "OK", "matchCode": match_id, "signalR": {
+                        "url": connection_url,
+                        "accessToken": connection_token
+                    }}, 200)
+    
 
     except Exception as e:
         logging.exception("Error in join_game")
@@ -572,8 +563,13 @@ def quit_game(req: func.HttpRequest) -> func.HttpResponse:
         player_id = body['playerId']
 
         # fetch current lobby state
-        query = f"SELECT * FROM matches m WHERE m.matchId = {match_id}"
-        item = list(matches_container.query_items(query=query, enable_cross_partition_query=True))[0]
+        query = "SELECT * FROM matches m WHERE m.matchId = @matchId"
+        params = [{"name": "@matchId", "value": match_id}]
+        items = list(matches_container.query_items(query=query, parameters=params, enable_cross_partition_query=True))[0]
+
+        if not items:
+            return _json({"result": False, "msg": "Lobby not found"}, 404)
+        item = items[0]
 
         players = item["players"]
 
@@ -610,9 +606,12 @@ def settings(req: func.HttpRequest) -> func.HttpResponse:
         match_settings = body["matchSettings"]
 
         # fetch current lobby state
-        query = f"SELECT * FROM matches m WHERE m.matchId = {match_id}"
-        item = list(matches_container.query_items(query=query, enable_cross_partition_query=True))[0]
-
+        query = "SELECT * FROM matches m WHERE m.matchId = @matchId"
+        params = [{"name": "@matchId", "value": match_id}]
+        items = list(matches_container.query_items(query=query, parameters=params, enable_cross_partition_query=True))
+        if not items:
+            return _json({"result": False, "msg": "Lobby not found"}, 404)
+        item = items[0]
         
         # update entry
         item["matchSettings"] = match_settings
@@ -673,15 +672,25 @@ def results(req: func.HttpRequest) -> func.HttpResponse:
         match_id = body['matchCode']
 
         # Remove entry from matches container
-        query = f"SELECT * FROM matches m WHERE m.matchId = {match_id}"
-        item = list(matches_container.query_items(query=query, enable_cross_partition_query=True))[0]
+        query = "SELECT * FROM matches m WHERE m.matchId = @matchId"
+        params = [{"name": "@matchId", "value": match_id}]
+        items = list(matches_container.query_items(query=query, parameters=params, enable_cross_partition_query=True))
+
+        if not items:
+            return _json({"result": False, "msg": "Match not found"}, 404)
+        item = items[0]
 
         matches_container.delete_item(item=item, partition_key=item["partitionKey"])
 
         # get match results
 
-        query = f"SELECT * FROM Results r WHERE r.game_id = {match_id}"
-        item = list(results_container.query_items(query=query, enable_cross_partition_query=True))[0]
+        query = f"SELECT * FROM Results r WHERE r.game_id = @game_id"
+        params = [{"name": "@game_id", "value": match_id}]
+        items = list(results_container.query_items(query=query, enable_cross_partition_query=True))
+
+        if not items:
+            return _json({"result": False, "msg": "Result not found"}, 404)
+        item = items[0]
 
         player_scores = item["round_scores"]
 
@@ -704,7 +713,13 @@ def results(req: func.HttpRequest) -> func.HttpResponse:
 
         return _json({"result": True, "msg": "OK", "playerScores": player_scores}, 200)
 
+    except KeyError as e:
+        logging.exception("Missing key in response data")
+        return _json({"result": False, "msg": f"Missing key: {str(e)}"}, 400)
+    except IndexError as e:
+        logging.exception("Item not found in the container")
+        return _json({"result": False, "msg": "Item not found"}, 404)
     except Exception as e:
-        logging.exception("Error in results")
+        logging.exception("Error processing results")
         return _json({"result": False, "msg": str(e)}, 500)
 
