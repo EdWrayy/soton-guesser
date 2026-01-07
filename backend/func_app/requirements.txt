@@ -1,3 +1,6 @@
+aiohappyeyeballs==2.6.1
+aiohttp==3.13.3
+aiosignal==1.4.0
 annotated-types==0.7.0
 anyio==4.8.0
 argon2-cffi==23.1.0
@@ -6,9 +9,14 @@ arrow==1.3.0
 asttokens==3.0.0
 async-lru==2.0.4
 attrs==25.1.0
+azure-common==1.1.28
 azure-core==1.36.0
 azure-cosmos==4.14.0
 azure-functions==1.24.0
+azure-functions-durable==1.4.0
+azure-mgmt-core==1.6.0
+azure-mgmt-signalr==1.2.0
+azure-servicebus==7.14.3
 azure-storage-blob==12.27.1
 babel==2.17.0
 bcrypt==5.0.0
@@ -36,6 +44,8 @@ fastjsonschema==2.21.1
 Flask==3.1.2
 fonttools==4.55.3
 fqdn==1.5.1
+frozenlist==1.8.0
+furl==2.1.4
 geomet==1.1.0
 geopandas==1.0.1
 google-api-core==2.24.0
@@ -54,6 +64,7 @@ httpx==0.28.1
 ibm-cloud-sdk-core==3.22.1
 ibm-platform-services==0.59.1
 idna==3.10
+importlib_metadata==8.7.1
 ipykernel==6.29.5
 ipython==8.32.0
 ipywidgets==8.1.5
@@ -85,6 +96,8 @@ matplotlib==3.10.0
 matplotlib-inline==0.1.7
 mistune==3.1.2
 mpmath==1.3.0
+msrest==0.7.1
+multidict==6.7.0
 multitasking==0.0.12
 narwhals==2.12.0
 nbclient==0.10.2
@@ -95,6 +108,11 @@ nest-asyncio==1.6.0
 notebook==7.3.2
 notebook_shim==0.2.4
 numpy==2.2.2
+oauthlib==3.3.1
+opentelemetry-api==1.39.1
+opentelemetry-sdk==1.39.1
+opentelemetry-semantic-conventions==0.60b1
+orderedmultidict==1.0.2
 overrides==7.7.0
 packaging==24.2
 pandas==2.2.3
@@ -107,6 +125,7 @@ platformdirs==4.3.6
 plotly==6.5.0
 prometheus_client==0.21.1
 prompt_toolkit==3.0.50
+propcache==0.4.1
 proto-plus==1.25.0
 protobuf==5.29.3
 psutil==7.0.0
@@ -135,8 +154,10 @@ PyYAML==6.0.2
 pyzmq==26.2.1
 qiskit==1.4.0
 qiskit-ibm-runtime==0.36.1
+redis==7.1.0
 referencing==0.36.2
 requests==2.32.3
+requests-oauthlib==2.0.0
 requests_ntlm==1.3.0
 rfc3339-validator==0.1.4
 rfc3986-validator==0.1.1
@@ -147,7 +168,7 @@ scikit-learn==1.7.2
 scipy==1.15.2
 seaborn==0.13.2
 Send2Trash==1.8.3
-setuptools==75.8.1
+setuptools==80.9.0
 shapely==2.0.6
 six==1.17.0
 sniffio==1.3.1
@@ -175,3 +196,5 @@ websocket-client==1.8.0
 websockets==15.0.1
 Werkzeug==3.1.3
 widgetsnbextension==4.0.13
+yarl==1.22.0
+zipp==3.23.0
