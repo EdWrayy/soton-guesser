@@ -8,13 +8,22 @@
     <div id="game">
         <p class = "error">{{errorMessage}}</p>
         <div v-if="connected">
+            <div v-if="state == null">
+                <h2>Connection lost, please reload page</h2>
+            </div>
             <div v-if="state.state.currentClientMode == 0"><%- include('login'); -%></div>
             <div v-if="state.state.currentClientMode == 1"><%- include('menu'); -%></div>
             <div v-if="state.state.currentClientMode == 2"><%- include('game'); -%></div>
             <div v-if="state.state.currentClientMode == 3"><%- include('upload'); -%></div>
         </div>
         <div v-else>
-            <p>Connecting...</p>
+            <div v-if="disconnected" >
+                <h2>Connection lost</h2>
+                <h3>Please reload your browser</h3>
+            </div>
+            <div v-else>
+                <p>Connecting...</p>
+            </div>
         </div>
     </div>
 

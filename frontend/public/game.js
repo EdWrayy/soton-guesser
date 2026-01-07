@@ -12,6 +12,7 @@ var app = new Vue({
     el: '#game',
     data: {
         connected: false,
+        disconnected: false,
         state: {state: {currentClientMode: 0, gameState: 0}, isAdmin: true, player: {name: "me", currentScore: 0, guess: null}, otherPlayers: []},
         leaderboard: null,
         registering: false,
@@ -276,7 +277,7 @@ function connect() {
 
     //Handle disconnection
     socket.on('disconnect', function() {
-        alert('Disconnected');
+        app.disconnected = true;
         app.connected = false;
     });
 };
