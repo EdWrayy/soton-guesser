@@ -24,7 +24,7 @@ app.get('/', (req, res) => {
 });
 
 //URL of backend API
-const BACKEND_ENDPOINT = process.env.BACKEND || 'https://southampton-guesser-functions-awdkf4e5crf8b8bd.francecentral-01.azurewebsites.net';
+const BACKEND_ENDPOINT = process.env.BACKEND || 'http://localhost:7072' // || 'https://southampton-guesser-functions-awdkf4e5crf8b8bd.francecentral-01.azurewebsites.net';
 const BACKEND_KEY = process.env.BACKEND_KEY || 'pIDE43MBnBZXsvp6vtqjzhmZO_viKFDHuhxtTKfD4FqjAzFu7M5e8g==';
 const DURABLE_FUNCTIONS_ENDPOINT = process.env.DURABLE_FUNCTIONS_ENDPOINT || 'http://localhost:7071/api';
 const DURABLE_FUNCTIONS_KEY = process.env.DURABLE_FUNCTIONS_KEY || 'YOUR_DURABLE_FUNCTIONS_KEY_HERE';
@@ -469,6 +469,8 @@ function makeGuessAPI(socket, guess){
     let player = socketsToPlayers.get(socket);
     let playerId = playerToId.get(player);
     let game = playerToGame.get(player);
+    console.log("\n\nPlayer " + player + " is making guess " + JSON.stringify(guess) + " in game " + game + "\n\n");
+
 
     backendRequest('POST', '/guess', {
         body: { matchCode: game, playerId: playerId, guess: guess }
@@ -524,7 +526,7 @@ function startGameOrchestratorAPI(game){
 
     //Needs to be fixed next - currently calling back end not durable function - I think this issue was casued when the backend request function was added.
     backendRequest('POST', '/start_game_trigger', {
-        body: { gameId: game, rounds: numRounds, time: timeRounds }
+        body: { game_id: game, rounds: numRounds, time: timeRounds }
     }, function(err, response, body){
         if (err){
             console.log("Error starting orchestrator:", err);
@@ -578,7 +580,7 @@ function startGameOrchestratorAPI(game){
                 });
             });
 
-            connection.on("roundEnded1", (data) => {
+            connection.on("roundEnded", (data) => {
                 console.log("Received end round signal from orchestrator");
                 console.log(data);
                 var game = orchestratorToGame.get(connectionToOrchestrator.get(connection));
@@ -590,6 +592,8 @@ function startGameOrchestratorAPI(game){
             });
 
             connection.on("updateLeaderboard", (data) => {
+                console.log("Received update leaderboard signal from orchestrator");
+                console.log(data);
                 var game = orchestratorToGame.get(connectionToOrchestrator.get(connection));
                 var roundResults = data[0];
                 startAnswers(game, roundResults);

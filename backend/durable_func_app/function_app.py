@@ -39,7 +39,7 @@ async def http_start(req: func.HttpRequest, client: df.DurableOrchestrationClien
     
     instance_id = await client.start_new("game_orchestrator", None, payload)
     
-    logging.info(f"Started orchestration with ID = '{instance_id}'.")
+    logging.warning(f"Started orchestration with ID = '{instance_id}'.")
     return client.create_check_status_response(req, instance_id)
 
 # ORCHESTRATOR
@@ -47,9 +47,11 @@ async def http_start(req: func.HttpRequest, client: df.DurableOrchestrationClien
 def game_orchestrator(context: df.DurableOrchestrationContext):
     input_data = context.get_input()
     game_id = input_data.get("game_id")
+    logging.warning(f"game_orchestrator: Starting game_id={game_id}")
     num_rounds = input_data.get("rounds", 5)
 
-    for round_num in range(1, num_rounds + 1):
+    # for round_num in range(1, num_rounds + 1):
+    for round_num in range(1,2):
         round_setup = yield context.call_activity("prepare_round", {"game_id": game_id, "round": round_num})
         
         yield context.call_activity("signalr_broadcast", {
@@ -103,6 +105,7 @@ def prepare_round(params: dict):
     # Build query with a literal OFFSET to avoid SDK kwargs confusion
     offset = random.randint(0, 50)
     query = f"SELECT * FROM c OFFSET {offset} LIMIT 1"
+    logging.warning(f"prepare_round: game_id={game_id} round={round_num} selecting random place")
     items = list(places_col.query_items(
         query=query,
         enable_cross_partition_query=True,
@@ -113,16 +116,19 @@ def prepare_round(params: dict):
             enable_cross_partition_query=True,
         ))
         if not items:
-            raise Exception("No places found in Cosmos container")
+                logging.error("prepare_round: No places found in Cosmos container")
+                raise Exception("No places found in Cosmos container")
 
     place = items[0]
+    logging.warning(f"prepare_round: selected place id={place.get('id')}")
 
 
-    answer_key = f"game:{game_id}:round:{round_num}:answer"
+    answer_key = f"match:{game_id}:round:{round_num}:answer"
     coords = {"lat": place["location"]["lat"], "lon": place["location"]["lon"]}
     if r:
         try:
             r.set(answer_key, json.dumps(coords))
+            logging.warning(f"prepare_round: cached answer in Redis key='{answer_key}'")
         except Exception as e:
             logging.warning(f"Redis not available, skipping answer cache: {e}")
 
@@ -140,35 +146,51 @@ def prepare_round(params: dict):
         expiry=datetime.datetime.utcnow() + timedelta(minutes=5)
     )
 
+    signed_url = f"{blob_client.url}?{sas_token}"
+    logging.warning("prepare_round: generated SAS URL for image")
+
     return {
-        "image_url": f"{blob_client.url}?{sas_token}",
+        "image_url": signed_url,
         "round": round_num,
         "location_id": place['id']
     }
 
 @app.activity_trigger(input_name="game_id")
 def process_scores(game_id: str):
+    logging.info(f"process_scores: start for game_id={game_id}")
     if r is None:
-        logging.warning("Redis not configured; skipping process_scores")
-        return []
+        logging.warning("process_scores: Redis not configured; aborting")
+        raise Exception("Redis not configured")
 
     guesses_key = f"match:{game_id}:round_guesses"
     scores_key = f"match:{game_id}:scores"
-
-    all_guesses_raw = r.hgetall(guesses_key)
+    try:
+        all_guesses_raw = r.hgetall(guesses_key)
+        logging.warning(f"process_scores: fetched {len(all_guesses_raw)} guesses from '{guesses_key}'")
+    except Exception as e:
+        logging.exception(f"process_scores: failed to read guesses from Redis key '{guesses_key}': {e}")
+        raise
     
     round_results = []
     
     for player_id, json_data in all_guesses_raw.items():
-        guess_data = json.loads(json_data)
+        try:
+            guess_data = json.loads(json_data)
+        except Exception:
+            logging.exception(f"process_scores: invalid JSON for player_id={player_id}: {json_data}")
+            continue
+
         score = guess_data.get("score", 0)
-        
+        logging.warning(f"process_scores: player_id={player_id} score={score}")
         round_results.append({
             "player_id": player_id,
             "data": guess_data
         })
-        
-        r.zincrby(scores_key, score, player_id)
+
+        try:
+            r.zincrby(scores_key, score, player_id)
+        except Exception:
+            logging.exception(f"process_scores: failed to ZINCRBY '{scores_key}' for player_id={player_id}")
 
     game_result_doc = {
         "id": f"{game_id}_{int(datetime.datetime.utcnow().timestamp())}",
@@ -176,15 +198,20 @@ def process_scores(game_id: str):
         "round_scores": round_results,
         "timestamp": str(datetime.datetime.utcnow())
     }
-
-    results_col.upsert_item(game_result_doc)
+    logging.warning(f"process_scores: upserting results to Cosmos. results_len={len(round_results)}")
+    try:
+        results_col.upsert_item(game_result_doc)
+    except Exception:
+        logging.exception("process_scores: failed to upsert results to Cosmos")
+        raise
     
-
     try:
         r.delete(guesses_key)
+        logging.warning(f"process_scores: deleted Redis key '{guesses_key}'")
     except Exception as e:
-        logging.warning(f"Could not delete Redis guesses key: {e}")
+        logging.warning(f"process_scores: could not delete Redis key '{guesses_key}': {e}")
 
+    logging.info("process_scores: completed")
     return round_results
 
 @app.activity_trigger(input_name="payload")

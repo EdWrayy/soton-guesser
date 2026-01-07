@@ -101,7 +101,7 @@ def _inc_score(user_id: str, scope: str, display_name: str, delta: int) -> None:
 
     scores_container.upsert_item(doc)
 
-def _enqueue_guess(game_id:str, player_id: str, lat: float, lon: float):
+def _enqueue_guess(game_id:str, player_id: str, lat: float, lon: float, round_no: int) -> None:
     conn_str = os.environ["ServiceBusConnection"]
     queue_name = "guesses"
 
@@ -109,7 +109,8 @@ def _enqueue_guess(game_id:str, player_id: str, lat: float, lon: float):
         "game_id": game_id,
         "player_id": player_id,
         "lat": lat,
-        "lon": lon
+        "lon": lon,
+        "round_no": round_no
     }
 
     with ServiceBusClient.from_connection_string(conn_str) as client:
@@ -636,12 +637,13 @@ def guess(req: func.HttpRequest) -> func.HttpResponse:
         player_guess = body["guess"]
         lat = float(player_guess["lat"])
         lon = float(player_guess["lon"])
+        round_no = body.get("round_no", 1)
 
         if not (-90 <= lat <= 90 and -180 <= lon <= 180):
             raise ValueError("Invalid coordinates")
 
         # Add to service bus queue
-        _enqueue_guess(match_id, player_id, lat, lon)
+        _enqueue_guess(match_id, player_id, lat, lon, round_no)
 
         return _json({"result": True, "msg": "OK"}, 200)
 

@@ -187,7 +187,10 @@ var app = new Vue({
        setBuildingImage() {
         let element = document.getElementById("guessImage");
         if (element != null) {
-            element.src = this.location.imageBase64;
+            console.log("setting image");
+            console.log(this.location.blob.url);
+            console.log(this.location);
+            element.src = this.location.blob.url;
         }
         else {setTimeout(this.setBuildingImage, 1000);}
        },
@@ -288,7 +291,7 @@ function mapClicked(latLng) {
         clearMarkers();
         map.panTo(latLng);
         console.log(latLng);
-        app.state.player.guess = {lat:latLng.lat(), log:latLng.lng()};
+        app.state.player.guess = {lat:latLng.lat(), lon:latLng.lng()};
         app.mapMarkers.push(new google.maps.marker.AdvancedMarkerElement({
             map,
             position: latLng,
