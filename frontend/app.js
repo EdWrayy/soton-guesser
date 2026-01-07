@@ -487,9 +487,13 @@ function makeGuessAPI(socket, guess){
 }
 
 function getLocationAPI(locationId, cb){
+    console.log("Getting location with id " + locationId);
     backendRequest('GET', '/get_place', {
         qs: { id: locationId }
     }, function(err, response, body){
+        console.log(err);
+        console.log(body);
+        console.log(response.statusCode);
         if (err) return cb(err);
         if (body && body['result']){
             return cb(null, body['place']);
@@ -555,15 +559,15 @@ function startGameOrchestratorAPI(game){
                     skipNegotiation: true
                 })
                 .withAutomaticReconnect()
-                .configureLogging(signalR.LogLevel.Information)
+                // .configureLogging(signalR.LogLevel.Information)
+                .configureLogging(signalR.LogLevel.Error)
                 .build();
 
 
 
-            connection.on("newRound", (data) => {
+            connection.on("newRound", (imageUrl, locationId) => {
                 console.log("Received new round signal from orchestrator");
-                console.log(data);
-                var locationId = data[1];
+                console.log({ imageUrl, locationId });
                 var gameId = orchestratorToGame.get(connectionToOrchestrator.get(connection));
                 getLocationAPI(locationId, (err, location) => {
                     if (err){
@@ -574,7 +578,7 @@ function startGameOrchestratorAPI(game){
                 });
             });
 
-            connection.on("roundEnded", (data) => {
+            connection.on("roundEnded1", (data) => {
                 console.log("Received end round signal from orchestrator");
                 console.log(data);
                 var game = orchestratorToGame.get(connectionToOrchestrator.get(connection));
