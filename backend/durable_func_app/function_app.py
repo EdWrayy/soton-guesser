@@ -57,6 +57,7 @@ async def http_start(req: func.HttpRequest, client: df.DurableOrchestrationClien
 def game_orchestrator(context: df.DurableOrchestrationContext):
     input_data = context.get_input()
     game_id = input_data.get("game_id")
+    time_to_wait = input_data.get("time", 30)
     logging.warning(f"game_orchestrator: Starting game_id={game_id}")
     num_rounds = input_data.get("rounds", 3)
 
@@ -70,7 +71,7 @@ def game_orchestrator(context: df.DurableOrchestrationContext):
             "arguments": [round_setup['image_url'], round_setup['location_id']]
         })
 
-        round_timeout = context.current_utc_datetime + timedelta(seconds=30)
+        round_timeout = context.current_utc_datetime + timedelta(seconds=time_to_wait)
         yield context.create_timer(round_timeout)
 
         yield context.call_activity("signalr_broadcast", {

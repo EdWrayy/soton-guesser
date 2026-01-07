@@ -339,6 +339,7 @@ function initMap() {
 
         //add guess markers
         if (app.state.player.guess != null) {
+            console.log("adding player guess marker")
             console.log({lat: app.state.player.guess.lat, lng: app.state.player.guess.lon})
             console.log(app.state.player.guess)
             new google.maps.marker.AdvancedMarkerElement({
@@ -368,9 +369,12 @@ function initMap() {
                 borderColor: '#a57c00ff',
                 glyphColor: '#a57c00ff'
             });
+            console.log("adding correct location marker")
+            console.log(app.location)
+            console.log({lat: app.location.location.lat, lng: app.location.location.lon})
             let correctLocation = new google.maps.marker.AdvancedMarkerElement({
                     map,
-                    position: {lat: app.location.lat, lng: app.location.lon},
+                    position: {lat: app.location.location.lat, lng: app.location.location.lon},
                 });
             correctLocation.append(pinBackground);
         }
