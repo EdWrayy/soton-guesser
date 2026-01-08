@@ -75,7 +75,6 @@ def _get_user_by_username(username: str) -> Optional[Dict[str, Any]]:
     return results[0] if results else None
 
 def _get_user_by_user_id(user_id: str) -> Optional[Dict[str, Any]]:
-    # Your "user_id" everywhere else is actually the user's document "id"
     query = "SELECT TOP 1 * FROM c WHERE c.id = @u"
     params = [{"name": "@u", "value": user_id}]
     results = list(users_container.query_items(
