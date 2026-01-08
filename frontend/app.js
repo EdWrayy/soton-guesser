@@ -6,7 +6,10 @@ const app = express();
 
 //set up sockets
 const server = require('http').Server(app);
-const io = require('socket.io')(server);
+const io = require('socket.io')(server, {
+  // Allow larger websocket messages (base64 images)
+  maxHttpBufferSize: 12 * 1024 * 1024, // 12 MB
+});
 const request = require('request');
 
 //set up signalr
@@ -45,6 +48,18 @@ function backendRequest(method, path, options = {}, cb, endpoint = BACKEND_ENDPO
     };
 
     return request(reqOptions, cb);
+}
+
+function resetPlayerForNewGame(username) {
+    const ps = loggedinPlayers.get(username);
+    if (!ps) return;
+
+    // New object so we do not keep old references
+    loggedinPlayers.set(username, {
+        name: ps.name,
+        currentScore: 0,
+        guess: null
+    });
 }
 
 //Server state
@@ -174,9 +189,12 @@ function getState(player){
 
 //Start a session
 function startSession(admin, apiResponse) {
+    
     let lobbyCode = apiResponse['matchCode'];
     let signalR = apiResponse['signalR'];
     let matchSettings = apiResponse['matchSettings'];
+
+    resetPlayerForNewGame(admin);
 
     admins.push(admin);
 
@@ -200,7 +218,7 @@ function startSession(admin, apiResponse) {
 
 function joinSession(player, game, apiResponse) {
     let signalR = apiResponse['signalR'];
-
+    resetPlayerForNewGame(player);
     let otherPlayers = gameToPlayers.get(game);
     otherPlayers.push(player)
     gameToPlayers.set(game, otherPlayers);
@@ -538,12 +556,27 @@ function uploadImageAPI(socket, data){
             error(socket, "Something went wrong when contacting the backend", false);
             return;
         }
-        if(body && body['result']){
-            console.log("Image successfully uploaded at: " + body['url']);
+
+        if (body && body['result']) {
+            // Your backend currently returns result=true but no url, so handle both cases.
+            const url =
+                body['url'] ||
+                body['imageUrl'] ||
+                body['blobUrl'] ||
+                body['sasUrl'] ||
+                null;
+
+            if (url) {
+                console.log("Image successfully uploaded at: " + url);
+                socket.emit('notice', "Image successfully uploaded.");
+            } else {
+                console.log("Image successfully uploaded, but backend did not return a url:", body);
+                socket.emit('notice', "Image successfully uploaded.");
+            }
+            return;
         }
-        else{
-            error(socket, (body && body['msg']) || "Upload failed", false);
-        }
+
+        error(socket, (body && body['msg']) || "Upload failed", false);
     });
 }
 

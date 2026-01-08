@@ -59,21 +59,16 @@ body {
     padding-top: 10px;
     height: 100vh;
 }
+
 .leaderboard {
   display: grid;
-  width: 500px;
-  grid-template-columns: 50% 50%;
-  background-color: rgb(0, 0, 0);
+  width: 100%;         
+  max-width: 360px;     
+  grid-template-columns: 1fr 110px; 
   padding: 0px;
   background-color: #f1f1f1;
 }
 
-.leaderboard div {
-  border: 1px solid black;
-  padding: 0px;
-  font-size: 30px;
-  text-align: center;
-}
 
 .leaderboardEntry> :nth-child(1){
   background-color: gold;
@@ -91,9 +86,9 @@ body {
 
 .leaderboardHeading {
   display: grid;
-  width: 500px;
-  grid-template-columns: 50% 50%;
-  background-color: rgb(0, 0, 0);
+  width: 100%;          
+  max-width: 360px;     
+  grid-template-columns: 1fr 110px;
   padding: 0px;
 }
 .leaderboardHeading div {
@@ -108,23 +103,26 @@ body {
   display: grid;
   grid-template-columns: 23% 23% 23% 23%;
   background-color: rgb(157, 204, 229);
-  padding: 10px;
-  column-gap: 2%;
-  row-gap: 10px;
+  padding: 8px;       
+  column-gap: 1.5%;  
+  row-gap: 6px;       
   border-radius: 20px;
   border-color: black;
   border-style: solid;
 }
+
 .entry {
   background-color: #f1f1f1;
   border: 1px solid black;
-  border-style: solid;
-  border-radius: 20px;
-  padding: 5px;
-  font-size: 30px;
+  border-radius: 10px;   
+  padding: 4px;       
+  font-size: 18px;      
   text-align: center;
-}
 
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .guessing {
   display: grid;
   width: 700px;
