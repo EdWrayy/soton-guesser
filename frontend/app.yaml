@@ -15,3 +15,10 @@ resources:
   cpu: 1
   memory_gb: 0.5
   disk_size_gb: 10
+
+env_variables:
+  BACKEND: "https://southampton-guesser-functions-awdkf4e5crf8b8bd.francecentral-01.azurewebsites.net"
+  DURABLE_FUNCTIONS_ENDPOINT: "https://southampton-guesser-durable-abehdmf6ccdteng7.francecentral-01.azurewebsites.net/api"
+  SIGNALR_ENDPOINT: "https://southampton-guesser-signalr.service.signalr.net"
+  BACKEND_KEY: "=="
+  DURABLE_FUNCTIONS_KEY: "-=="
