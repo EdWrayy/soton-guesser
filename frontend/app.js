@@ -6,7 +6,10 @@ const app = express();
 
 //set up sockets
 const server = require('http').Server(app);
-const io = require('socket.io')(server);
+const io = require('socket.io')(server, {
+  // Allow larger websocket messages (base64 images)
+  maxHttpBufferSize: 12 * 1024 * 1024, // 12 MB
+});
 const request = require('request');
 
 //set up signalr
@@ -47,6 +50,18 @@ function backendRequest(method, path, options = {}, cb, endpoint = BACKEND_ENDPO
     return request(reqOptions, cb);
 }
 
+function resetPlayerForNewGame(username) {
+    const ps = loggedinPlayers.get(username);
+    if (!ps) return;
+
+    // New object so we do not keep old references
+    loggedinPlayers.set(username, {
+        name: ps.name,
+        currentScore: 0,
+        guess: null
+    });
+}
+
 //Server state
 let registeredPlayers = [];
 let loggedinPlayers = new Map();
@@ -67,6 +82,9 @@ let gameToState = new Map();
 let playerToSignalR = new Map();
 let gameToSettings = new Map();
 let gameToCurrentLocation = new Map();
+let gameToGuessedPlayers = new Map();
+let gameToRoundEndedEarly = new Map();
+let gameToRound = new Map();
 
 let playersToSockets = new Map();
 let socketsToPlayers = new Map();
@@ -105,8 +123,15 @@ function advance(game) {
 
 function startGuessing(game, location){
     let players = gameToPlayers.get(game);
+    if (!players || !Array.isArray(players)) {
+        console.log("startGuessing: no players for game", game, "ignoring newRound event");
+        return;
+    }
     gameToCurrentLocation.set(game, location);
     gameToState.set(game, 1);
+    gameToGuessedPlayers.set(game, new Set());
+    gameToRoundEndedEarly.set(game, false);
+    gameToRound.set(game, (gameToRound.get(game) || 0) + 1);
     for (let i = 0; i < players.length; i++){
         let socket = playersToSockets.get(players[i]);
         let time = gameToSettings.get(game)['countdown'];
@@ -144,6 +169,9 @@ function getState(player){
     }
     console.log("Getting state for player " + player + " in game " + game);
     const gameState = gameToState.get(game);
+    const settings = gameToSettings.get(game) || {};
+    const currentRound = gameToRound.get(game) || 0;
+    const totalRounds = settings['noOfRounds'] || 0;
     const isAdmin = admins.includes(player);
     const playerMode = playerToState.get(player);
     const playerIndex = gameToPlayers.get(game).indexOf(player);
@@ -155,15 +183,18 @@ function getState(player){
             otherPlayers.push(info);
         }
     }
-    return {state: {currentClientMode: playerMode, gameState: gameState}, isAdmin: isAdmin, player: playerState, otherPlayers: otherPlayers};
+    return {state: {currentClientMode: playerMode, gameState: gameState, currentRound: currentRound, totalRounds: totalRounds}, isAdmin: isAdmin, player: playerState, otherPlayers: otherPlayers};
 }
 
 
 //Start a session
 function startSession(admin, apiResponse) {
+    
     let lobbyCode = apiResponse['matchCode'];
     let signalR = apiResponse['signalR'];
     let matchSettings = apiResponse['matchSettings'];
+
+    resetPlayerForNewGame(admin);
 
     admins.push(admin);
 
@@ -176,6 +207,7 @@ function startSession(admin, apiResponse) {
 
     playerToSignalR.set(admin, signalR);
     gameToSettings.set(lobbyCode, matchSettings);
+    gameToRound.set(lobbyCode, 0);
 
     playerToState.set(admin, 2);
     let adminSocket = playersToSockets.get(admin);
@@ -186,7 +218,7 @@ function startSession(admin, apiResponse) {
 
 function joinSession(player, game, apiResponse) {
     let signalR = apiResponse['signalR'];
-
+    resetPlayerForNewGame(player);
     let otherPlayers = gameToPlayers.get(game);
     otherPlayers.push(player)
     gameToPlayers.set(game, otherPlayers);
@@ -292,26 +324,71 @@ function increaseScores(roundResults){
 
 }
 
-function concludeGame(game){
-    var admin = gameToAdmin.get(game);
-    var players = gameToPlayers.get(game);
-    var orchestrator = gameToOrchestrator.get(game);
-    var connection = orchestratorToConnection.get(game);
+function endRoundEarly(game){
+    const orchestrator = gameToOrchestrator.get(game);
+    if (!orchestrator || !orchestrator.sendEventPostUri){
+        console.log("No orchestrator event URL for game " + game);
+        return;
+    }
+    const url = orchestrator.sendEventPostUri.replace("{eventName}", "roundEndedEarly");
+    request.post({ url, json: true, body: { reason: "all_players_guessed" } }, function(err, response, body){
+        if (err){
+            console.log("Error ending round early:", err);
+            return;
+        }
+        console.log("Requested early round end for game " + game + ":", response && response.statusCode);
+    });
+}
 
+function requestNextRound(game){
+    const orchestrator = gameToOrchestrator.get(game);
+    if (!orchestrator || !orchestrator.sendEventPostUri){
+        console.log("No orchestrator event URL for game " + game);
+        return;
+    }
+    const url = orchestrator.sendEventPostUri.replace("{eventName}", "advanceRound");
+    request.post({ url, json: true, body: { reason: "admin_advance" } }, function(err, response, body){
+        if (err){
+            console.log("Error requesting next round:", err);
+            return;
+        }
+        console.log("Requested next round for game " + game + ":", response && response.statusCode);
+    });
+}
+
+function concludeGame(game){
+    const admin = gameToAdmin.get(game);
+    const players = gameToPlayers.get(game) || [];
+    const orchestrator = gameToOrchestrator.get(game); // this is the durable payload, includes id
+    const orchestratorId = orchestrator && orchestrator.id ? orchestrator.id : null;
+
+    // Stop SignalR connection for this orchestrator
+    if (orchestratorId) {
+        const connection = orchestratorToConnection.get(orchestratorId);
+        if (connection) {
+            try {
+                console.log("Stopping SignalR connection for orchestrator", orchestratorId, "game", game);
+                connection.stop(); // fire and forget
+            } catch (e) {
+                console.log("Error stopping SignalR connection:", e);
+            }
+            connectionToOrchestrator.delete(connection);
+            orchestratorToConnection.delete(orchestratorId);
+        }
+        orchestratorToGame.delete(orchestratorId);
+        orchestratorToSignalURL.delete(orchestratorId);
+    }
+
+    // Clear game/player relationships
     if (admin != null){
         adminToGame.delete(admin);
+        const idx = admins.indexOf(admin);
+        if (idx >= 0) admins.splice(idx, 1);
     }
-    if (players != null){
-        for (let i = 0; i < players.length; i++){
-            var player = players[i];
-            playerToGame.delete(player);
-        }
-    }
-    if (connection != null){
-        connectionToOrchestrator.delete(connection);
-    }
-    if (orchestrator != null){
-        orchestratorToConnection.delete(orchestrator);
+
+    for (const player of players){
+        playerToGame.delete(player);
+        playerToSignalR.delete(player);
     }
 
     gameToAdmin.delete(game);
@@ -320,6 +397,18 @@ function concludeGame(game){
     gameToCurrentLocation.delete(game);
     gameToSettings.delete(game);
     gameToState.delete(game);
+    gameToGuessedPlayers.delete(game);
+    gameToRoundEndedEarly.delete(game);
+    gameToRound.delete(game);
+}
+
+function finalizeGame(game){
+    const players = gameToPlayers.get(game) || [];
+    concludeGame(game);
+    for (const player of players) {
+        playerToState.set(player, 1);
+        updateClient(player);
+    }
 }
 
 
@@ -395,15 +484,32 @@ function registerPlayerAPI(socket, username, password){
         body: { username: username, password: password }
     }, function(err, response, body){
         if (err){
-            error(socket, "Something went wrong when contacting the backend", false);
+            error(socket, "Unable to reach the backend. Please try again.", false);
             return;
         }
         if (response.statusCode !== 200 && response.statusCode !== 201){
-            error(socket, "Registration failed with status code " + response.statusCode, false);
+            if (response.statusCode === 409 && body && body['msg']){
+                error(socket, body['msg'], false);
+                return;
+            }
+            if (response.statusCode === 400){
+                if (body && typeof body['msg'] === 'string' && body['msg'].toLowerCase().includes("password")){
+                    error(socket, "Password is too long. Please use a shorter password.", false);
+                    return;
+                }
+                error(socket, "Registration failed. Please check your details and try again.", false);
+                return;
+            }
+            if (response.statusCode >= 500){
+                error(socket, "Registration failed. Please try again later.", false);
+                return;
+            }
+            error(socket, "Registration failed. Please try again.", false);
             return;
         }
         if(body && body['result']){
             register(socket, username);
+            socket.emit('notice', 'Registration successful. Please log in.');
         }
         else{
             error(socket, (body && body['msg']) || "Registration failed", false);
@@ -417,15 +523,24 @@ function loginPlayerAPI(socket, username, password){
     }, function(err, response, body){
         console.log(body);
         if (err){
-            error(socket, "Something went wrong when contacting the backend", false);
+            error(socket, "Unable to reach the backend. Please try again.", false);
             return;
         }
         if (response.statusCode !== 200){
-            error(socket, "Login failed with status code " + response.statusCode, false);
+            if (response.statusCode === 401){
+                error(socket, "Username or password incorrect.", false);
+                return;
+            }
+            if (response.statusCode >= 500){
+                error(socket, "Login failed. Please try again later.", false);
+                return;
+            }
+            error(socket, "Login failed. Please try again.", false);
             return;
         }
         if(body && body['result']){
             login(socket, username, password, body);
+            socket.emit('notice', 'Login successful.');
         }
         else{
             error(socket, (body && body['msg']) || "Login failed", false);
@@ -441,12 +556,27 @@ function uploadImageAPI(socket, data){
             error(socket, "Something went wrong when contacting the backend", false);
             return;
         }
-        if(body && body['result']){
-            console.log("Image successfully uploaded at: " + body['url']);
+
+        if (body && body['result']) {
+            // Your backend currently returns result=true but no url, so handle both cases.
+            const url =
+                body['url'] ||
+                body['imageUrl'] ||
+                body['blobUrl'] ||
+                body['sasUrl'] ||
+                null;
+
+            if (url) {
+                console.log("Image successfully uploaded at: " + url);
+                socket.emit('notice', "Image successfully uploaded.");
+            } else {
+                console.log("Image successfully uploaded, but backend did not return a url:", body);
+                socket.emit('notice', "Image successfully uploaded.");
+            }
+            return;
         }
-        else{
-            error(socket, (body && body['msg']) || "Upload failed", false);
-        }
+
+        error(socket, (body && body['msg']) || "Upload failed", false);
     });
 }
 
@@ -491,18 +621,35 @@ function makeGuessAPI(socket, guess){
     let player = socketsToPlayers.get(socket);
     let playerId = playerToId.get(player);
     let game = playerToGame.get(player);
+    let roundNo = gameToRound.get(game) || 1;
     console.log("\n\nPlayer " + player + " is making guess " + JSON.stringify(guess) + " in game " + game + "\n\n");
 
-
     backendRequest('POST', '/guess', {
-        body: { matchCode: game, playerId: playerId, guess: guess }
+        body: { matchCode: game, playerId: playerId, guess: guess, round_no: roundNo }
     }, function(err, response, body){
         if (err){
             console.log("Something went wrong when guessing:", err);
             return;
         }
-        if(body && body['result']){
+
+        if (body && body['result']){
             console.log("Guess successfully sent");
+
+            const guessedPlayers = gameToGuessedPlayers.get(game);
+            if (guessedPlayers){
+                guessedPlayers.add(player);
+
+                const players = gameToPlayers.get(game) || [];
+
+                if (!gameToRoundEndedEarly.get(game) && guessedPlayers.size >= players.length){
+                    gameToRoundEndedEarly.set(game, true);
+
+                    // Delay early-end slightly to give backend time to persist guesses before scoring runs
+                    setTimeout(() => {
+                        endRoundEarly(game);
+                    }, 5000); 
+                }
+            }
         }
         else{
             console.log("Backend rejected guess:", body && body['msg']);
@@ -530,12 +677,17 @@ function resultsAPI(game){
     backendRequest('POST', '/results', {
         body: { matchCode: game }
     }, function(err, response, body){
-        if(body && body['result']){
-            concludeGame(game);
+        if (err){
+            console.log("Results API error:", err);
+            finalizeGame(game);
+            return;
         }
-        else{
-            console.log((body && body['msg']) || err);
+        if (body && body['result']){
+            finalizeGame(game);
+            return;
         }
+        console.log((body && body['msg']) || "Results API failed");
+        finalizeGame(game);
     });
 }
 
@@ -696,6 +848,12 @@ io.on('connection', socket => {
         var player = socketsToPlayers.get(socket);
         var game = playerToGame.get(player);
         advance(game);
+    });
+
+    socket.on('nextRound', () => {
+        var player = socketsToPlayers.get(socket);
+        var game = playerToGame.get(player);
+        requestNextRound(game);
     });
 
     socket.on('disconnect', () => {

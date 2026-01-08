@@ -12,7 +12,7 @@
             <p>Global leaderboard</p>
             <select id="leaderboardTimeframe" onchange="updateLeaderboard()" onload="updateLeaderboard()">
                 <option value="Default">Select Leaderboard Duration</option>
-                <option value="month">Month</option>
+                <option value="month:CURRENT">Month</option>
                 <option value="alltime">All Time</option>
             </select>
             <%- include('leaderboard'); -%>

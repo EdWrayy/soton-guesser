@@ -5,7 +5,10 @@
         <button class="btn btn-lg btn-primary" @click="advance">Next</button>
     </div> -->
     <div v-if="!awnsered">
-        <button class="btn btn-lg btn-primary" @click="awnser">Sumbit awnser</button>
+        <button class="btn btn-lg btn-primary" @click="awnser">Submit answer</button>
+    </div>
+    <div v-else>
+        <p>Guess submitted. Waiting for the round to end.</p>
     </div>
     <div v-if="location != null">
             <h3>{{location.name}}</h3>
