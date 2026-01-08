@@ -75,10 +75,14 @@ def _get_user_by_username(username: str) -> Optional[Dict[str, Any]]:
     return results[0] if results else None
 
 def _get_user_by_user_id(user_id: str) -> Optional[Dict[str, Any]]:
-    # Parameterised query to avoid injection
-    query = "SELECT TOP 1 * FROM c WHERE c.userId = @u"
-    params = [{"userId": "@u", "value": user_id}]
-    results = list(users_container.query_items(query=query, parameters=params, enable_cross_partition_query=True))
+    # Your "user_id" everywhere else is actually the user's document "id"
+    query = "SELECT TOP 1 * FROM c WHERE c.id = @u"
+    params = [{"name": "@u", "value": user_id}]
+    results = list(users_container.query_items(
+        query=query,
+        parameters=params,
+        enable_cross_partition_query=True
+    ))
     return results[0] if results else None
 
 def _inc_score(user_id: str, scope: str, display_name: str, delta: int) -> None:
@@ -89,7 +93,7 @@ def _inc_score(user_id: str, scope: str, display_name: str, delta: int) -> None:
     except exceptions.CosmosResourceNotFoundError:
         doc = {
             "id": scope,          # id is just the scope now
-            "userId": user_id,    # must exist because it's your PK path
+            "userId": user_id,    
             "scope": scope,
             "score": 0,
             "displayName": display_name,
@@ -662,66 +666,74 @@ def guess(req: func.HttpRequest) -> func.HttpResponse:
 # Write results to Cosmos
 # End game
 # Clears DBs and updates player data
-@app.route(route="results", auth_level=func.AuthLevel.FUNCTION, methods=["POST"])
+@app.route(route="results", methods=["POST"], auth_level=func.AuthLevel.FUNCTION)
 def results(req: func.HttpRequest) -> func.HttpResponse:
-    # Expects: {matchCode: 6 digit code}
-    # Returns: {playerScores: {
-    #        "player_id": player_id,
-    #        "data": guess_data
-    #    }}
     try:
-        body = req.get_json()
-        match_id = body['matchCode']
+        # Support both JSON body and query params
+        body = {}
+        try:
+            body = req.get_json() or {}
+        except ValueError:
+            body = {}
 
-        # Remove entry from matches container
-        query = "SELECT * FROM matches m WHERE m.matchId = @matchId"
-        params = [{"name": "@matchId", "value": match_id}]
-        items = list(matches_container.query_items(query=query, parameters=params, enable_cross_partition_query=True))
+        match_id = (
+            body.get("matchCode")
+            or body.get("match_id")
+            or body.get("game_id")
+            or req.params.get("matchCode")
+            or req.params.get("match_id")
+            or req.params.get("game_id")
+        )
+
+        if not match_id:
+            return _json({"result": False, "msg": "Missing matchCode/match_id/game_id"}, 400)
+
+        # Pull ALL Results docs for this game (one per round)
+        items = list(results_container.query_items(
+            query="SELECT * FROM c WHERE c.game_id = @game_id",
+            parameters=[{"name": "@game_id", "value": match_id}],
+            enable_cross_partition_query=True
+        ))
 
         if not items:
-            return _json({"result": False, "msg": "Match not found"}, 404)
-        item = items[0]
+            return _json({"result": False, "msg": f"Result not found for game_id={match_id}"}, 404)
 
-        matches_container.delete_item(item=item, partition_key=item["partitionKey"])
+        # Accumulate total score per player across all rounds
+        totals = {}  # player_id -> total_score
+        for doc in items:
+            for entry in doc.get("round_scores", []):
+                pid = entry.get("player_id")
+                data = entry.get("data", {}) or {}
 
-        # get match results
+                try:
+                    s = int(data.get("score", 0))
+                except (TypeError, ValueError):
+                    s = 0
 
-        query = f"SELECT * FROM Results r WHERE r.game_id = @game_id"
-        params = [{"name": "@game_id", "value": match_id}]
-        items = list(results_container.query_items(query=query, enable_cross_partition_query=True))
+                if pid:
+                    totals[pid] = totals.get(pid, 0) + s
 
-        if not items:
-            return _json({"result": False, "msg": "Result not found"}, 404)
-        item = items[0]
-
-        player_scores = item["round_scores"]
-
-        # Add scores to users
-        for player_score in player_scores:
-
-            # get user
-            id = player_score["player_id"]
-            user = _get_user_by_user_id(id)
-
-            if (not user):
+        # Update scores once per player using the accumulated totals
+        updated = []
+        skipped = []
+        for pid, delta in totals.items():
+            user = _get_user_by_user_id(pid)
+            if not user:
+                skipped.append({"player_id": pid, "reason": "user_not_found"})
                 continue
-            else: 
-                # Update players score data
-                display_name = user["displayName"]
-                delta = player_score["data"]
-                if (delta > 0):
-                    _inc_score(id, "alltime", display_name, delta)
-                    _inc_score(id, _month_scope(), display_name, delta)
 
-        return _json({"result": True, "msg": "OK", "playerScores": player_scores}, 200)
+            display_name = user.get("displayName", "") or user.get("username", "") or ""
 
-    except KeyError as e:
-        logging.exception("Missing key in response data")
-        return _json({"result": False, "msg": f"Missing key: {str(e)}"}, 400)
-    except IndexError as e:
-        logging.exception("Item not found in the container")
-        return _json({"result": False, "msg": "Item not found"}, 404)
+            if delta > 0:
+                _inc_score(pid, "alltime", display_name, delta)
+                _inc_score(pid, _month_scope(), display_name, delta)
+                updated.append({"player_id": pid, "delta": delta})
+
+        return _json(
+            {"result": True, "msg": "OK", "game_id": match_id, "totals": totals, "updated": updated, "skipped": skipped},
+            200
+        )
+
     except Exception as e:
-        logging.exception("Error processing results")
+        logging.exception("results: error")
         return _json({"result": False, "msg": str(e)}, 500)
-

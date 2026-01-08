@@ -33,7 +33,7 @@ const DURABLE_FUNCTIONS_ENDPOINT = process.env.DURABLE_FUNCTIONS_ENDPOINT || 'ht
 const DURABLE_FUNCTIONS_KEY = process.env.DURABLE_FUNCTIONS_KEY || 'YOUR_DURABLE_FUNCTIONS_KEY_HERE';
 const SIGNALR_ENDPOINT = process.env.SIGNALR_ENDPOINT || 'http://localhost:7071/api/';
 
-// ---- Helper: always include function key in headers ----
+// ---- Helper: include function key in headers ----
 function backendRequest(method, path, options = {}, cb, endpoint = BACKEND_ENDPOINT, key = BACKEND_KEY) {
     const url = `${endpoint}${path}`;
     const reqOptions = {
@@ -558,7 +558,6 @@ function uploadImageAPI(socket, data){
         }
 
         if (body && body['result']) {
-            // Your backend currently returns result=true but no url, so handle both cases.
             const url =
                 body['url'] ||
                 body['imageUrl'] ||
