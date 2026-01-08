@@ -1,11 +1,13 @@
-<!doctype html>
-<html lang="en">
-    <div v-if="state.isAdmin">
-        <button class="btn btn-lg btn-primary" @click="nextRound">{{ state.state.currentRound >= state.state.totalRounds ? 'Finish game' : 'Next round' }}</button>
-    </div>
-    <div v-else>
-        <p>Waiting for the host to start the next round.</p>
-    </div>
-    <h2>Overall scores:</h2>
+<div v-if="state.isAdmin">
+    <button class="btn btn-lg btn-primary" @click="nextRound">{{ state.state.currentRound >= state.state.totalRounds ? 'Finish game' : 'Next round' }}</button>
+</div>
+<div v-else>
+    <p>Waiting for the host to start the next round.</p>
+</div>
+
+<h2>Overall scores:</h2>
+
+<div class="awnsers">
+    <%- include('map'); -%>
     <%- include('leaderboard'); -%>
-</html>
+</div>
