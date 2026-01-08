@@ -196,21 +196,36 @@ var app = new Vue({
         startTimer(time);
        },
        startAwnsers(state, playerScores) {
-        this.update(state);
-        stopTimer();
-        this.setLeaderboard(playerScores);
-        console.log("player scores:");
-        console.log(this.leaderboard);
-        console.log(state);
-        this.orderLeaderboard();
-        this.setBuildingImage();
-        // Wait for Vue to render the view that contains #map, then init it
-        this.$nextTick(() => {
-            if (document.getElementById("map")) {
-                resetMap();
+            this.update(state);
+            stopTimer();
+
+            // If backend returned no results, still show everyone with 0
+            if (!Array.isArray(playerScores) || playerScores.length === 0) {
+                const fallback = [...(state.otherPlayers || []), state.player]
+                    .filter(Boolean)
+                    .map(p => ({
+                        displayName: p.name,
+                        score: 0
+                    }));
+
+                this.setLeaderboard(fallback);
+            } else {
+                this.setLeaderboard(playerScores);
             }
-        });
-       },
+
+            console.log("player scores:");
+            console.log(this.leaderboard);
+            console.log(state);
+
+            this.orderLeaderboard();
+            this.setBuildingImage();
+
+            this.$nextTick(() => {
+                if (document.getElementById("map")) {
+                    resetMap();
+                }
+            });
+        },
        startScores(state) {
         this.update(state);
         stopTimer();

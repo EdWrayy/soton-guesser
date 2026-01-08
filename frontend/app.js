@@ -108,6 +108,10 @@ function advance(game) {
 
 function startGuessing(game, location){
     let players = gameToPlayers.get(game);
+    if (!players || !Array.isArray(players)) {
+        console.log("startGuessing: no players for game", game, "ignoring newRound event");
+        return;
+    }
     gameToCurrentLocation.set(game, location);
     gameToState.set(game, 1);
     gameToGuessedPlayers.set(game, new Set());
@@ -335,25 +339,38 @@ function requestNextRound(game){
 }
 
 function concludeGame(game){
-    var admin = gameToAdmin.get(game);
-    var players = gameToPlayers.get(game);
-    var orchestrator = gameToOrchestrator.get(game);
-    var connection = orchestratorToConnection.get(game);
+    const admin = gameToAdmin.get(game);
+    const players = gameToPlayers.get(game) || [];
+    const orchestrator = gameToOrchestrator.get(game); // this is the durable payload, includes id
+    const orchestratorId = orchestrator && orchestrator.id ? orchestrator.id : null;
 
+    // Stop SignalR connection for this orchestrator
+    if (orchestratorId) {
+        const connection = orchestratorToConnection.get(orchestratorId);
+        if (connection) {
+            try {
+                console.log("Stopping SignalR connection for orchestrator", orchestratorId, "game", game);
+                connection.stop(); // fire and forget
+            } catch (e) {
+                console.log("Error stopping SignalR connection:", e);
+            }
+            connectionToOrchestrator.delete(connection);
+            orchestratorToConnection.delete(orchestratorId);
+        }
+        orchestratorToGame.delete(orchestratorId);
+        orchestratorToSignalURL.delete(orchestratorId);
+    }
+
+    // Clear game/player relationships
     if (admin != null){
         adminToGame.delete(admin);
+        const idx = admins.indexOf(admin);
+        if (idx >= 0) admins.splice(idx, 1);
     }
-    if (players != null){
-        for (let i = 0; i < players.length; i++){
-            var player = players[i];
-            playerToGame.delete(player);
-        }
-    }
-    if (connection != null){
-        connectionToOrchestrator.delete(connection);
-    }
-    if (orchestrator != null){
-        orchestratorToConnection.delete(orchestrator);
+
+    for (const player of players){
+        playerToGame.delete(player);
+        playerToSignalR.delete(player);
     }
 
     gameToAdmin.delete(game);
@@ -574,7 +591,6 @@ function makeGuessAPI(socket, guess){
     let roundNo = gameToRound.get(game) || 1;
     console.log("\n\nPlayer " + player + " is making guess " + JSON.stringify(guess) + " in game " + game + "\n\n");
 
-
     backendRequest('POST', '/guess', {
         body: { matchCode: game, playerId: playerId, guess: guess, round_no: roundNo }
     }, function(err, response, body){
@@ -582,15 +598,23 @@ function makeGuessAPI(socket, guess){
             console.log("Something went wrong when guessing:", err);
             return;
         }
-        if(body && body['result']){
+
+        if (body && body['result']){
             console.log("Guess successfully sent");
+
             const guessedPlayers = gameToGuessedPlayers.get(game);
             if (guessedPlayers){
                 guessedPlayers.add(player);
+
                 const players = gameToPlayers.get(game) || [];
+
                 if (!gameToRoundEndedEarly.get(game) && guessedPlayers.size >= players.length){
                     gameToRoundEndedEarly.set(game, true);
-                    endRoundEarly(game);
+
+                    // Delay early-end slightly to give backend time to persist guesses before scoring runs
+                    setTimeout(() => {
+                        endRoundEarly(game);
+                    }, 5000); 
                 }
             }
         }
