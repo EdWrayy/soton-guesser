@@ -72,7 +72,12 @@ def game_orchestrator(context: df.DurableOrchestrationContext):
         })
 
         round_timeout = context.current_utc_datetime + timedelta(seconds=time_to_wait)
-        yield context.create_timer(round_timeout)
+        early_end_event = context.wait_for_external_event("roundEndedEarly")
+        timer_task = context.create_timer(round_timeout)
+        winner = yield context.task_any([early_end_event, timer_task])
+        if winner == early_end_event and not timer_task.is_completed:
+            timer_task.cancel()
+            logging.warning(f"game_orchestrator: round {round_num} ended early for game_id={game_id}")
 
         yield context.call_activity("signalr_broadcast", {
             "game_id": game_id,
@@ -88,9 +93,8 @@ def game_orchestrator(context: df.DurableOrchestrationContext):
             "arguments": [round_results]
         })
         
-        # Short pause between rounds
-        inter_round_timeout = context.current_utc_datetime + timedelta(seconds=10)
-        yield context.create_timer(inter_round_timeout)
+        # Wait for admin to advance to next round or finish the game
+        yield context.wait_for_external_event("advanceRound")
         
     # yield context.call_activity("final_scores_to_cosmos", {"game_id": game_id})
 
